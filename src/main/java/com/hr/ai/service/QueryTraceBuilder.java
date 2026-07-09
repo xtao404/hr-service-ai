@@ -39,6 +39,10 @@ public class QueryTraceBuilder {
     public QueryTrace buildKnowledgeTrace() {
         QueryTrace trace = new QueryTrace();
         trace.setRouteType("KNOWLEDGE");
+        trace.setStatus("DONE");
+        trace.setStage("COMPLETE");
+        trace.setStageLabel("回答完成");
+        trace.setProgressMessage("已完成知识库检索与回答生成。");
         trace.setIntent(HrQueryIntent.KNOWLEDGE.name());
         trace.setIntentLabel(INTENT_LABELS.get(HrQueryIntent.KNOWLEDGE));
         trace.setDataSource("知识库 knowledge_documents");
@@ -53,6 +57,12 @@ public class QueryTraceBuilder {
         boolean textToSql = "text-to-sql".equals(context.getQueryMethod());
 
         trace.setRouteType(textToSql ? "TEXT_TO_SQL" : "PRESET_QUERY");
+        trace.setStatus("DONE");
+        trace.setStage("COMPLETE");
+        trace.setStageLabel("回答完成");
+        trace.setProgressMessage(textToSql
+                ? "已完成数据分析、结果整理与回答生成。"
+                : "已完成业务数据读取与回答生成。");
         trace.setIntent(intent.name());
         trace.setIntentLabel(INTENT_LABELS.getOrDefault(intent, intent.name()));
         trace.setDataSource(context.getDataSource());

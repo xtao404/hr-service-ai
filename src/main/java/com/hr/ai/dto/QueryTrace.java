@@ -9,6 +9,12 @@ import java.util.List;
 public class QueryTrace {
     /** KNOWLEDGE | PRESET_QUERY | TEXT_TO_SQL */
     private String routeType;
+    /** THINKING | ANSWERING | DONE */
+    private String status;
+    /** ANALYZE | RETRIEVE | QUERY | GENERATE | COMPLETE */
+    private String stage;
+    private String stageLabel;
+    private String progressMessage;
     private String intent;
     private String intentLabel;
     private String dataSource;
