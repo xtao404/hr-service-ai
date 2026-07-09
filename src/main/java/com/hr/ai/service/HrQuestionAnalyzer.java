@@ -1,5 +1,6 @@
 package com.hr.ai.service;
 
+import com.hr.ai.config.PresetQueryProperties;
 import com.hr.ai.config.TextToSqlProperties;
 import com.hr.ai.dto.NamedEmployeeQuery;
 import com.hr.ai.model.enums.EmployeeQueryTopic;
@@ -41,9 +42,12 @@ public class HrQuestionAnalyzer {
             "(?:查询|查|问)?([\\u4e00-\\u9fa5]{2,4})(?:的)?(?:工资|薪资|薪酬)(?:是多少|多少)?");
 
     private final TextToSqlProperties textToSqlProperties;
+    private final PresetQueryProperties presetQueryProperties;
 
-    public HrQuestionAnalyzer(TextToSqlProperties textToSqlProperties) {
+    public HrQuestionAnalyzer(TextToSqlProperties textToSqlProperties,
+                              PresetQueryProperties presetQueryProperties) {
         this.textToSqlProperties = textToSqlProperties;
+        this.presetQueryProperties = presetQueryProperties;
     }
 
     public HrQueryIntent analyze(String question, UserPrincipal user) {
@@ -53,6 +57,41 @@ public class HrQuestionAnalyzer {
             return HrQueryIntent.TEXT_TO_SQL;
         }
 
+        HrQueryIntent presetIntent = resolvePresetIntent(q, question, user);
+        if (presetIntent == HrQueryIntent.KNOWLEDGE) {
+            return HrQueryIntent.KNOWLEDGE;
+        }
+
+        if (presetQueryProperties.isEnabled()) {
+            return presetIntent;
+        }
+
+        return fallbackWhenPresetDisabled(q, user);
+    }
+
+    public Optional<NamedEmployeeQuery> extractNamedEmployeeQuery(String question) {
+        if (question == null || question.isBlank()) {
+            return Optional.empty();
+        }
+        String q = question.toLowerCase(Locale.ROOT);
+        if (isAggregateEmployeeQuery(q)) {
+            return Optional.empty();
+        }
+        return extractEmployeeName(question).map(name ->
+                new NamedEmployeeQuery(name, inferEmployeeTopic(q)));
+    }
+
+    public Optional<String> extractEmployeeNameFromSalaryQuery(String question) {
+        return extractNamedEmployeeQuery(question)
+                .filter(nq -> nq.getTopic() == EmployeeQueryTopic.SALARY)
+                .map(NamedEmployeeQuery::getEmployeeName);
+    }
+
+    public String currentQuarter() {
+        return CURRENT_QUARTER;
+    }
+
+    private HrQueryIntent resolvePresetIntent(String q, String question, UserPrincipal user) {
         if (isPersonal(q)) {
             if (containsAny(q, "假期", "年假", "余额", "请假")) return HrQueryIntent.PERSONAL_LEAVE;
             if (containsAny(q, "加班")) return HrQueryIntent.PERSONAL_OVERTIME;
@@ -87,26 +126,18 @@ public class HrQuestionAnalyzer {
         return HrQueryIntent.KNOWLEDGE;
     }
 
-    public Optional<NamedEmployeeQuery> extractNamedEmployeeQuery(String question) {
-        if (question == null || question.isBlank()) {
-            return Optional.empty();
+    private HrQueryIntent fallbackWhenPresetDisabled(String q, UserPrincipal user) {
+        if (textToSqlProperties.isEnabled() && canFallbackToTextToSql(q, user)) {
+            return HrQueryIntent.TEXT_TO_SQL;
         }
-        String q = question.toLowerCase(Locale.ROOT);
-        if (isAggregateEmployeeQuery(q)) {
-            return Optional.empty();
-        }
-        return extractEmployeeName(question).map(name ->
-                new NamedEmployeeQuery(name, inferEmployeeTopic(q)));
+        return HrQueryIntent.KNOWLEDGE;
     }
 
-    public Optional<String> extractEmployeeNameFromSalaryQuery(String question) {
-        return extractNamedEmployeeQuery(question)
-                .filter(nq -> nq.getTopic() == EmployeeQueryTopic.SALARY)
-                .map(NamedEmployeeQuery::getEmployeeName);
-    }
-
-    public String currentQuarter() {
-        return CURRENT_QUARTER;
+    private boolean canFallbackToTextToSql(String q, UserPrincipal user) {
+        if (user.getRole() == UserRole.EMPLOYEE && !isPersonal(q)) {
+            return false;
+        }
+        return true;
     }
 
     private boolean isAggregateEmployeeQuery(String q) {

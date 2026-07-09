@@ -78,6 +78,8 @@ hr:
       few-shot-enabled: true
       self-correction-enabled: true
       max-retries: 2
+    preset-query:
+      enabled: false
 
 logging:
   level:

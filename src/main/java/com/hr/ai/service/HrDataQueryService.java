@@ -1,5 +1,6 @@
 package com.hr.ai.service;
 
+import com.hr.ai.config.PresetQueryProperties;
 import com.hr.ai.dto.EmployeeProfileResponse;
 import com.hr.ai.dto.HrDataContext;
 import com.hr.ai.dto.NamedEmployeeQuery;
@@ -35,6 +36,7 @@ public class HrDataQueryService {
     private final HrQuestionAnalyzer questionAnalyzer;
     private final PermissionService permissionService;
     private final TextToSqlService textToSqlService;
+    private final PresetQueryProperties presetQueryProperties;
 
     public HrQueryIntent detectIntent(String question, UserPrincipal user) {
         return questionAnalyzer.analyze(question, user);
@@ -49,6 +51,15 @@ public class HrDataQueryService {
 
         if (intent == HrQueryIntent.TEXT_TO_SQL) {
             return textToSqlService.query(question, user);
+        }
+
+        if (!presetQueryProperties.isEnabled()) {
+            HrDataContext context = new HrDataContext();
+            context.setIntent(HrQueryIntent.KNOWLEDGE);
+            context.setDataSource("知识库 knowledge_documents");
+            context.setQueryMethod("rag");
+            context.setDataText("");
+            return context;
         }
 
         HrDataContext context = new HrDataContext();
