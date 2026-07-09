@@ -1,15 +1,44 @@
 package com.hr.ai.service;
 
 import com.hr.ai.config.TextToSqlProperties;
+import com.hr.ai.dto.NamedEmployeeQuery;
+import com.hr.ai.model.enums.EmployeeQueryTopic;
 import com.hr.ai.model.enums.HrQueryIntent;
 import com.hr.ai.model.enums.UserRole;
 import com.hr.ai.security.UserPrincipal;
 import org.springframework.stereotype.Component;
 
+import java.util.Locale;
+import java.util.Optional;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 @Component
 public class HrQuestionAnalyzer {
 
     private static final String CURRENT_QUARTER = "2026-Q1";
+
+    private static final String TOPIC_SUFFIX = "假期|年假|请假|加班|工时|工资|薪资|薪酬|绩效|考核|评级|表现"
+            + "|考勤|迟到|缺勤|离职|风险|流失|满意度|档案|信息|资料";
+
+    private static final Set<String> NON_EMPLOYEE_NAME_WORDS = Set.of(
+            "查询", "部门", "公司", "我们", "人力", "资源", "薪酬", "工资", "薪资", "员工", "同事",
+            "我们部门", "哪个部门", "哪些员工", "所有员工", "全体员", "人力资源",
+            "年假", "假期", "加班", "绩效", "考勤", "离职", "风险", "满意度", "档案"
+    );
+
+    /** 问/查张三的假期、张三的假期 */
+    private static final Pattern NAMED_EMPLOYEE_WITH_DE = Pattern.compile(
+            "(?:查询|查|问)([\\u4e00-\\u9fa5]{2,4})的|([\\u4e00-\\u9fa5]{2,4})的");
+
+    /** 问/查张三假期、张三假期（无「的」） */
+    private static final Pattern NAMED_EMPLOYEE_DIRECT = Pattern.compile(
+            "(?:查询|查|问)?([\\u4e00-\\u9fa5]{2,4})(?:" + TOPIC_SUFFIX + ")");
+
+    /** 张三工资、查询张三薪酬 */
+    private static final Pattern NAMED_EMPLOYEE_SALARY = Pattern.compile(
+            "(?:查询|查|问)?([\\u4e00-\\u9fa5]{2,4})(?:的)?(?:工资|薪资|薪酬)(?:是多少|多少)?");
 
     private final TextToSqlProperties textToSqlProperties;
 
@@ -18,7 +47,7 @@ public class HrQuestionAnalyzer {
     }
 
     public HrQueryIntent analyze(String question, UserPrincipal user) {
-        String q = question.toLowerCase();
+        String q = question.toLowerCase(Locale.ROOT);
 
         if (textToSqlProperties.isEnabled() && shouldUseTextToSql(q, user)) {
             return HrQueryIntent.TEXT_TO_SQL;
@@ -31,6 +60,10 @@ public class HrQuestionAnalyzer {
             if (containsAny(q, "绩效", "考核", "评级")) return HrQueryIntent.PERSONAL_PERFORMANCE;
             if (containsAny(q, "考勤", "迟到", "缺勤")) return HrQueryIntent.PERSONAL_ATTENDANCE;
             return HrQueryIntent.PERSONAL_PROFILE;
+        }
+
+        if (extractNamedEmployeeQuery(question).isPresent()) {
+            return HrQueryIntent.NAMED_EMPLOYEE;
         }
 
         if (isManagerOrAbove(user.getRole())) {
@@ -54,8 +87,71 @@ public class HrQuestionAnalyzer {
         return HrQueryIntent.KNOWLEDGE;
     }
 
+    public Optional<NamedEmployeeQuery> extractNamedEmployeeQuery(String question) {
+        if (question == null || question.isBlank()) {
+            return Optional.empty();
+        }
+        String q = question.toLowerCase(Locale.ROOT);
+        if (isAggregateEmployeeQuery(q)) {
+            return Optional.empty();
+        }
+        return extractEmployeeName(question).map(name ->
+                new NamedEmployeeQuery(name, inferEmployeeTopic(q)));
+    }
+
+    public Optional<String> extractEmployeeNameFromSalaryQuery(String question) {
+        return extractNamedEmployeeQuery(question)
+                .filter(nq -> nq.getTopic() == EmployeeQueryTopic.SALARY)
+                .map(NamedEmployeeQuery::getEmployeeName);
+    }
+
     public String currentQuarter() {
         return CURRENT_QUARTER;
+    }
+
+    private boolean isAggregateEmployeeQuery(String q) {
+        return containsAny(q, "部门", "各部门", "公司", "竞争力", "平均", "均值",
+                "对比", "统计", "分析", "排名", "汇总", "概览", "整体", "哪个部门", "哪些");
+    }
+
+    private Optional<String> extractEmployeeName(String question) {
+        Matcher withDeMatcher = NAMED_EMPLOYEE_WITH_DE.matcher(question);
+        if (withDeMatcher.find()) {
+            String name = withDeMatcher.group(1) != null ? withDeMatcher.group(1) : withDeMatcher.group(2);
+            if (isValidEmployeeName(name)) {
+                return Optional.of(name);
+            }
+        }
+        Matcher salaryMatcher = NAMED_EMPLOYEE_SALARY.matcher(question);
+        if (salaryMatcher.find()) {
+            String name = salaryMatcher.group(1);
+            if (isValidEmployeeName(name)) {
+                return Optional.of(name);
+            }
+        }
+        Matcher directMatcher = NAMED_EMPLOYEE_DIRECT.matcher(question);
+        if (directMatcher.find()) {
+            String name = directMatcher.group(1);
+            if (isValidEmployeeName(name)) {
+                return Optional.of(name);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private boolean isValidEmployeeName(String name) {
+        return name != null && !name.isBlank() && !NON_EMPLOYEE_NAME_WORDS.contains(name);
+    }
+
+    private EmployeeQueryTopic inferEmployeeTopic(String q) {
+        if (containsAny(q, "假期", "年假", "余额", "请假")) return EmployeeQueryTopic.LEAVE;
+        if (containsAny(q, "加班", "工时")) return EmployeeQueryTopic.OVERTIME;
+        if (containsAny(q, "薪资", "工资", "薪酬")) return EmployeeQueryTopic.SALARY;
+        if (containsAny(q, "绩效", "考核", "评级", "表现")) return EmployeeQueryTopic.PERFORMANCE;
+        if (containsAny(q, "考勤", "迟到", "缺勤")) return EmployeeQueryTopic.ATTENDANCE;
+        if (containsAny(q, "离职", "风险", "流失", "挽留")) return EmployeeQueryTopic.TURNOVER;
+        if (containsAny(q, "满意度")) return EmployeeQueryTopic.SATISFACTION;
+        return EmployeeQueryTopic.PROFILE;
     }
 
     private boolean shouldUseTextToSql(String q, UserPrincipal user) {

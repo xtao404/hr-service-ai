@@ -2,6 +2,7 @@ package com.hr.ai.service;
 
 import com.hr.ai.dto.EmployeeProfileResponse;
 import com.hr.ai.dto.HrDataContext;
+import com.hr.ai.dto.NamedEmployeeQuery;
 import com.hr.ai.model.entity.biz.*;
 import com.hr.ai.model.enums.HrQueryIntent;
 import com.hr.ai.model.enums.UserRole;
@@ -10,6 +11,7 @@ import com.hr.ai.security.PermissionService;
 import com.hr.ai.security.UserPrincipal;
 import com.hr.ai.service.texttosql.TextToSqlService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -60,6 +62,7 @@ public class HrDataQueryService {
             case PERSONAL_ATTENDANCE -> fillPersonalAttendance(context, user);
             case PERSONAL_SALARY -> fillPersonalSalary(context, user);
             case PERSONAL_PERFORMANCE -> fillPersonalPerformance(context, user);
+            case NAMED_EMPLOYEE -> fillNamedEmployee(context, user, question);
             case DEPT_OVERTIME -> fillDeptOvertime(context, user);
             case DEPT_HEADCOUNT -> fillDeptHeadcount(context, user);
             case DEPT_TURNOVER -> fillDeptTurnover(context, user);
@@ -139,6 +142,189 @@ public class HrDataQueryService {
                     row.put("数值", perf.getScore());
                     context.setQueryRows(List.of(row));
                 });
+    }
+
+    private void fillNamedEmployee(HrDataContext context, UserPrincipal user, String question) {
+        NamedEmployeeQuery namedQuery = questionAnalyzer.extractNamedEmployeeQuery(question).orElse(null);
+        if (namedQuery == null) {
+            context.setDataText("无法识别要查询的员工姓名，请使用如「张三的加班时长」这类表述。");
+            return;
+        }
+
+        List<BizEmployee> employees = employeeRepository.findByName(namedQuery.getEmployeeName());
+        if (employees.isEmpty()) {
+            context.setDataText("未找到员工「" + namedQuery.getEmployeeName() + "」的人事档案。");
+            return;
+        }
+
+        BizEmployee emp = employees.get(0);
+        try {
+            permissionService.checkEmployeeAccess(emp.getEmployeeId(), emp.getDeptId());
+        } catch (AccessDeniedException e) {
+            context.setDataText("无权查询该员工的数据。");
+            return;
+        }
+
+        switch (namedQuery.getTopic()) {
+            case SALARY -> fillNamedEmployeeSalary(context, user, emp);
+            case LEAVE -> fillNamedEmployeeLeave(context, emp);
+            case OVERTIME -> fillNamedEmployeeOvertime(context, emp);
+            case ATTENDANCE -> fillNamedEmployeeAttendance(context, emp);
+            case PERFORMANCE -> fillNamedEmployeePerformance(context, emp);
+            case TURNOVER -> fillNamedEmployeeTurnover(context, emp);
+            case SATISFACTION -> fillNamedEmployeeSatisfaction(context, emp);
+            case PROFILE -> fillNamedEmployeeProfile(context, emp);
+        }
+    }
+
+    private void fillNamedEmployeeProfile(HrDataContext context, BizEmployee emp) {
+        context.setDataText(formatEmployeeDetail(emp));
+        context.setChartTitle(emp.getName() + " - 个人档案");
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("姓名", emp.getName());
+        row.put("员工编号", emp.getEmployeeId());
+        row.put("满意度", emp.getSatisfactionScore());
+        context.setQueryRows(List.of(row));
+    }
+
+    private void fillNamedEmployeeLeave(HrDataContext context, BizEmployee emp) {
+        String quarter = questionAnalyzer.currentQuarter();
+        BizAttendance att = attendanceRepository.findByEmployeeIdAndQuarter(emp.getEmployeeId(), quarter)
+                .orElse(null);
+        StringJoiner sj = new StringJoiner("\n");
+        sj.add("员工: " + emp.getName() + " (" + emp.getEmployeeId() + ")");
+        sj.add("季度: " + quarter);
+        sj.add("年假余额: " + (att != null ? att.getLeaveBalance() + " 天" : "暂无记录"));
+        context.setDataText(sj.toString());
+        context.setChartTitle(emp.getName() + " - 假期余额");
+        if (att != null) {
+            context.setQueryRows(List.of(Map.of("姓名", emp.getName(), "年假余额(天)", att.getLeaveBalance())));
+        }
+    }
+
+    private void fillNamedEmployeeOvertime(HrDataContext context, BizEmployee emp) {
+        String quarter = questionAnalyzer.currentQuarter();
+        BizAttendance att = attendanceRepository.findByEmployeeIdAndQuarter(emp.getEmployeeId(), quarter)
+                .orElse(null);
+        StringJoiner sj = new StringJoiner("\n");
+        sj.add("员工: " + emp.getName());
+        sj.add("季度: " + quarter);
+        sj.add("累计加班: " + (att != null ? att.getOvertimeHours() + " 小时" : "暂无记录"));
+        context.setDataText(sj.toString());
+        context.setChartTitle(emp.getName() + " - 加班时长");
+        if (att != null) {
+            context.setQueryRows(List.of(Map.of("姓名", emp.getName(), "累计加班(小时)", att.getOvertimeHours())));
+        }
+    }
+
+    private void fillNamedEmployeeAttendance(HrDataContext context, BizEmployee emp) {
+        BizAttendance att = attendanceRepository.findByEmployeeIdAndQuarter(
+                emp.getEmployeeId(), questionAnalyzer.currentQuarter()).orElse(null);
+        StringJoiner sj = new StringJoiner("\n");
+        sj.add("员工: " + emp.getName());
+        if (att != null) {
+            sj.add("迟到次数: " + att.getLateCount());
+            sj.add("缺勤天数: " + att.getAbsentDays());
+            sj.add("加班时长: " + att.getOvertimeHours() + " 小时");
+        } else {
+            sj.add("暂无考勤记录");
+        }
+        context.setDataText(sj.toString());
+        context.setChartTitle(emp.getName() + " - 考勤统计");
+        if (att != null) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("姓名", emp.getName());
+            row.put("迟到次数", att.getLateCount());
+            row.put("缺勤天数", att.getAbsentDays());
+            row.put("加班时长(小时)", att.getOvertimeHours());
+            context.setQueryRows(List.of(row));
+        }
+    }
+
+    private void fillNamedEmployeePerformance(HrDataContext context, BizEmployee emp) {
+        BizPerformance perf = performanceRepository.findFirstByEmployeeIdOrderByYearDescQuarterDesc(
+                emp.getEmployeeId()).orElse(null);
+        StringJoiner sj = new StringJoiner("\n");
+        sj.add("员工: " + emp.getName());
+        if (perf != null) {
+            sj.add("最近绩效: " + perf.getYear() + " " + perf.getQuarter());
+            sj.add("评级: " + perf.getRating() + "，分数: " + perf.getScore());
+            sj.add("可晋升: " + (Boolean.TRUE.equals(perf.getPromotionEligible()) ? "是" : "否"));
+        } else {
+            sj.add("暂无绩效记录");
+        }
+        context.setDataText(sj.toString());
+        context.setChartTitle(emp.getName() + " - 绩效数据");
+        if (perf != null) {
+            context.setQueryRows(List.of(Map.of("姓名", emp.getName(), "绩效分数", perf.getScore())));
+        }
+    }
+
+    private void fillNamedEmployeeTurnover(HrDataContext context, BizEmployee emp) {
+        BizTurnoverRisk risk = turnoverRiskRepository.findByEmployeeId(emp.getEmployeeId()).orElse(null);
+        StringJoiner sj = new StringJoiner("\n");
+        sj.add("员工: " + emp.getName());
+        if (risk != null) {
+            sj.add(String.format("离职风险分: %.0f%%", risk.getRiskScore() * 100));
+            sj.add("风险等级: " + risk.getRiskLevel());
+            sj.add("风险因素: " + risk.getFactors());
+            sj.add("建议: " + risk.getRecommendation());
+        } else {
+            sj.add("暂无离职风险记录");
+        }
+        context.setDataText(sj.toString());
+        context.setChartTitle(emp.getName() + " - 离职风险");
+        if (risk != null) {
+            context.setQueryRows(List.of(Map.of("姓名", emp.getName(), "离职风险分", risk.getRiskScore() * 100)));
+        }
+    }
+
+    private void fillNamedEmployeeSatisfaction(HrDataContext context, BizEmployee emp) {
+        StringJoiner sj = new StringJoiner("\n");
+        sj.add("员工: " + emp.getName());
+        sj.add("满意度评分: " + emp.getSatisfactionScore());
+        context.setDataText(sj.toString());
+        context.setChartTitle(emp.getName() + " - 满意度");
+        context.setQueryRows(List.of(Map.of("姓名", emp.getName(), "满意度", emp.getSatisfactionScore())));
+    }
+
+    private void fillNamedEmployeeSalary(HrDataContext context, UserPrincipal user, BizEmployee emp) {
+        context.setDataText(queryEmployeeSalary(user, emp));
+        context.setChartTitle(emp.getName() + " - 薪酬信息");
+
+        if (!permissionService.canViewSalary() || user.getRole() == UserRole.MANAGER) {
+            return;
+        }
+
+        salaryRepository.findByEmployeeId(emp.getEmployeeId()).ifPresent(salary -> {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("姓名", emp.getName());
+            row.put("基本月薪(元)", salary.getBaseSalary());
+            row.put("薪酬等级", salary.getSalaryBand());
+            context.setQueryRows(List.of(row));
+        });
+    }
+
+    private String queryEmployeeSalary(UserPrincipal user, BizEmployee emp) {
+        if (user.getRole() == UserRole.MANAGER) {
+            return "部门经理无权查看员工薪酬明细，请联系HRBP或HR管理员。";
+        }
+        if (!permissionService.canViewSalary()) {
+            if (user.getEmployeeId() != null && user.getEmployeeId().equals(emp.getEmployeeId())) {
+                return "薪酬属于敏感信息，普通员工无法通过系统查询具体金额，请联系HR。";
+            }
+            return "薪酬属于敏感信息，无权查询其他员工的薪酬数据。";
+        }
+
+        BizSalary salary = salaryRepository.findByEmployeeId(emp.getEmployeeId()).orElse(null);
+        if (salary == null) {
+            return "员工「" + emp.getName() + "」暂无薪酬记录。";
+        }
+        String deptName = departmentRepository.findByDeptId(emp.getDeptId())
+                .map(BizDepartment::getDeptName).orElse(emp.getDeptId());
+        return String.format("员工: %s (%s)\n部门: %s\n薪酬等级: %s\n基本月薪: %.0f 元\n最近调薪: %s",
+                emp.getName(), emp.getEmployeeId(), deptName,
+                salary.getSalaryBand(), salary.getBaseSalary(), salary.getLastAdjustDate());
     }
 
     private void fillDeptOvertime(HrDataContext context, UserPrincipal user) {

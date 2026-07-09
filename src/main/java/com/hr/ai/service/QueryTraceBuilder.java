@@ -24,6 +24,7 @@ public class QueryTraceBuilder {
             Map.entry(HrQueryIntent.PERSONAL_ATTENDANCE, "个人考勤查询"),
             Map.entry(HrQueryIntent.PERSONAL_SALARY, "个人薪酬查询"),
             Map.entry(HrQueryIntent.PERSONAL_PERFORMANCE, "个人绩效查询"),
+            Map.entry(HrQueryIntent.NAMED_EMPLOYEE, "指定员工查询"),
             Map.entry(HrQueryIntent.DEPT_OVERTIME, "部门加班统计"),
             Map.entry(HrQueryIntent.DEPT_HEADCOUNT, "部门人数统计"),
             Map.entry(HrQueryIntent.DEPT_TURNOVER, "部门离职风险"),
