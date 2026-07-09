@@ -12,7 +12,10 @@ import com.hr.ai.service.texttosql.TextToSqlService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.StringJoiner;
 
 @Service
@@ -50,22 +53,192 @@ public class HrDataQueryService {
         context.setIntent(intent);
         context.setDataSource("HR业务数据库");
         context.setQueryMethod("preset");
-        context.setDataText(switch (intent) {
-            case PERSONAL_PROFILE -> queryPersonalProfile(user);
-            case PERSONAL_LEAVE -> queryPersonalLeave(user);
-            case PERSONAL_OVERTIME -> queryPersonalOvertime(user);
-            case PERSONAL_ATTENDANCE -> queryPersonalAttendance(user);
-            case PERSONAL_SALARY -> queryPersonalSalary(user);
-            case PERSONAL_PERFORMANCE -> queryPersonalPerformance(user);
-            case DEPT_OVERTIME -> queryDeptOvertime(user);
-            case DEPT_HEADCOUNT -> queryDeptHeadcount(user);
-            case DEPT_TURNOVER -> queryDeptTurnover(user);
-            case DEPT_PERFORMANCE -> queryDeptPerformance(user);
-            case DEPT_SALARY -> queryDeptSalary(user);
-            case COMPANY_OVERVIEW -> queryCompanyOverview(user);
-            default -> "";
-        });
+        switch (intent) {
+            case PERSONAL_PROFILE -> fillPersonalProfile(context, user);
+            case PERSONAL_LEAVE -> fillPersonalLeave(context, user);
+            case PERSONAL_OVERTIME -> fillPersonalOvertime(context, user);
+            case PERSONAL_ATTENDANCE -> fillPersonalAttendance(context, user);
+            case PERSONAL_SALARY -> fillPersonalSalary(context, user);
+            case PERSONAL_PERFORMANCE -> fillPersonalPerformance(context, user);
+            case DEPT_OVERTIME -> fillDeptOvertime(context, user);
+            case DEPT_HEADCOUNT -> fillDeptHeadcount(context, user);
+            case DEPT_TURNOVER -> fillDeptTurnover(context, user);
+            case DEPT_PERFORMANCE -> fillDeptPerformance(context, user);
+            case DEPT_SALARY -> fillDeptSalary(context, user);
+            case COMPANY_OVERVIEW -> fillCompanyOverview(context, user);
+            default -> context.setDataText("");
+        }
         return context;
+    }
+
+    private void fillPersonalProfile(HrDataContext context, UserPrincipal user) {
+        BizEmployee emp = requireEmployee(user.getEmployeeId());
+        context.setDataText(formatEmployeeDetail(emp));
+        context.setChartTitle("个人档案概览");
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("姓名", emp.getName());
+        row.put("满意度", emp.getSatisfactionScore());
+        context.setQueryRows(List.of(row));
+    }
+
+    private void fillPersonalLeave(HrDataContext context, UserPrincipal user) {
+        context.setDataText(queryPersonalLeave(user));
+        context.setChartTitle("假期余额");
+        BizAttendance att = attendanceRepository.findByEmployeeIdAndQuarter(
+                user.getEmployeeId(), questionAnalyzer.currentQuarter()).orElse(null);
+        if (att != null) {
+            context.setQueryRows(List.of(Map.of("指标", "年假余额(天)", "数值", att.getLeaveBalance())));
+        }
+    }
+
+    private void fillPersonalOvertime(HrDataContext context, UserPrincipal user) {
+        context.setDataText(queryPersonalOvertime(user));
+        context.setChartTitle("加班时长");
+        BizAttendance att = attendanceRepository.findByEmployeeIdAndQuarter(
+                user.getEmployeeId(), questionAnalyzer.currentQuarter()).orElse(null);
+        if (att != null) {
+            context.setQueryRows(List.of(Map.of("指标", "累计加班(小时)", "数值", att.getOvertimeHours())));
+        }
+    }
+
+    private void fillPersonalAttendance(HrDataContext context, UserPrincipal user) {
+        context.setDataText(queryPersonalAttendance(user));
+        context.setChartTitle("考勤统计");
+        BizAttendance att = attendanceRepository.findByEmployeeIdAndQuarter(
+                user.getEmployeeId(), questionAnalyzer.currentQuarter()).orElse(null);
+        if (att != null) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("迟到次数", att.getLateCount());
+            row.put("缺勤天数", att.getAbsentDays());
+            row.put("加班时长(小时)", att.getOvertimeHours());
+            context.setQueryRows(List.of(row));
+        }
+    }
+
+    private void fillPersonalSalary(HrDataContext context, UserPrincipal user) {
+        context.setDataText(queryPersonalSalary(user));
+        context.setChartTitle("薪酬信息");
+        if (!permissionService.canViewSalary() && user.getRole() == UserRole.EMPLOYEE) {
+            return;
+        }
+        salaryRepository.findByEmployeeId(user.getEmployeeId()).ifPresent(salary -> {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("指标", "基本月薪(元)");
+            row.put("数值", salary.getBaseSalary());
+            context.setQueryRows(List.of(row));
+        });
+    }
+
+    private void fillPersonalPerformance(HrDataContext context, UserPrincipal user) {
+        context.setDataText(queryPersonalPerformance(user));
+        context.setChartTitle("绩效数据");
+        performanceRepository.findFirstByEmployeeIdOrderByYearDescQuarterDesc(user.getEmployeeId())
+                .ifPresent(perf -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("指标", "绩效分数");
+                    row.put("数值", perf.getScore());
+                    context.setQueryRows(List.of(row));
+                });
+    }
+
+    private void fillDeptOvertime(HrDataContext context, UserPrincipal user) {
+        context.setDataText(queryDeptOvertime(user));
+        context.setChartTitle("部门加班统计");
+        String deptId = resolveDeptId(user);
+        String quarter = questionAnalyzer.currentQuarter();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        employeeRepository.findByDeptIdAndStatus(deptId, "ACTIVE").forEach(emp ->
+                attendanceRepository.findByEmployeeIdAndQuarter(emp.getEmployeeId(), quarter)
+                        .ifPresent(att -> {
+                            Map<String, Object> row = new LinkedHashMap<>();
+                            row.put("姓名", emp.getName());
+                            row.put("加班时长(小时)", att.getOvertimeHours());
+                            row.put("迟到次数", att.getLateCount());
+                            rows.add(row);
+                        }));
+        context.setQueryRows(rows);
+    }
+
+    private void fillDeptHeadcount(HrDataContext context, UserPrincipal user) {
+        context.setDataText(queryDeptHeadcount(user));
+        context.setChartTitle("部门在职人数");
+        String deptId = resolveDeptId(user);
+        long count = employeeRepository.countByDeptIdAndStatus(deptId, "ACTIVE");
+        String deptName = departmentRepository.findByDeptId(deptId).map(BizDepartment::getDeptName).orElse(deptId);
+        context.setQueryRows(List.of(Map.of("部门名称", deptName, "在职人数", count)));
+    }
+
+    private void fillDeptTurnover(HrDataContext context, UserPrincipal user) {
+        context.setDataText(queryDeptTurnover(user));
+        context.setChartTitle("离职风险分布");
+        String deptId = resolveDeptId(user);
+        List<BizTurnoverRisk> risks = turnoverRiskRepository.findByDeptAndRiskLevels(deptId, HIGH_RISK_LEVELS);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (BizTurnoverRisk risk : risks) {
+            BizEmployee emp = employeeRepository.findByEmployeeId(risk.getEmployeeId()).orElse(null);
+            String name = emp != null ? emp.getName() : risk.getEmployeeId();
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("姓名", name);
+            row.put("离职风险分", risk.getRiskScore() * 100);
+            rows.add(row);
+        }
+        context.setQueryRows(rows);
+    }
+
+    private void fillDeptPerformance(HrDataContext context, UserPrincipal user) {
+        context.setDataText(queryDeptPerformance(user));
+        context.setChartTitle("部门绩效对比");
+        String deptId = resolveDeptId(user);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        employeeRepository.findByDeptIdAndStatus(deptId, "ACTIVE").forEach(emp ->
+                performanceRepository.findFirstByEmployeeIdOrderByYearDescQuarterDesc(emp.getEmployeeId())
+                        .ifPresent(perf -> {
+                            Map<String, Object> row = new LinkedHashMap<>();
+                            row.put("姓名", emp.getName());
+                            row.put("绩效分数", perf.getScore());
+                            row.put("满意度", emp.getSatisfactionScore());
+                            rows.add(row);
+                        }));
+        context.setQueryRows(rows);
+    }
+
+    private void fillDeptSalary(HrDataContext context, UserPrincipal user) {
+        context.setDataText(queryDeptSalary(user));
+        context.setChartTitle("薪酬对比");
+        if (user.getRole() == UserRole.MANAGER) {
+            return;
+        }
+        String deptId = resolveDeptId(user);
+        Double deptAvg = salaryRepository.avgBaseSalaryByDept(deptId);
+        Double companyAvg = salaryRepository.avgBaseSalary();
+        String deptName = departmentRepository.findByDeptId(deptId).map(BizDepartment::getDeptName).orElse(deptId);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        rows.add(Map.of("指标", deptName + "均值", "数值", deptAvg != null ? deptAvg : 0));
+        rows.add(Map.of("指标", "全公司均值", "数值", companyAvg != null ? companyAvg : 0));
+        context.setQueryRows(rows);
+    }
+
+    private void fillCompanyOverview(HrDataContext context, UserPrincipal user) {
+        context.setDataText(queryCompanyOverview(user));
+        context.setChartTitle("各部门概况");
+        if (user.getRole() == UserRole.EMPLOYEE) {
+            return;
+        }
+        String quarter = questionAnalyzer.currentQuarter();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        departmentRepository.findAll().forEach(dept -> {
+            if ("D000".equals(dept.getDeptId())) {
+                return;
+            }
+            long count = employeeRepository.countByDeptIdAndStatus(dept.getDeptId(), "ACTIVE");
+            Double overtime = attendanceRepository.sumOvertimeByDeptAndQuarter(dept.getDeptId(), quarter);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("部门名称", dept.getDeptName());
+            row.put("在职人数", count);
+            row.put("总加班时长", overtime != null ? overtime : 0);
+            rows.add(row);
+        });
+        context.setQueryRows(rows);
     }
 
     public EmployeeProfileResponse getEmployeeProfile(String employeeId) {

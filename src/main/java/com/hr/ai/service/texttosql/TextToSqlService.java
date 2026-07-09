@@ -76,6 +76,8 @@ public class TextToSqlService {
         context.setQueryMethod("text-to-sql");
         context.setGeneratedSql(finalSql);
         context.setRowCount(rows.size());
+        context.setQueryRows(rows);
+        context.setChartTitle(inferChartTitle(question));
         context.setDataText("执行SQL:\n" + finalSql + "\n\n" + formatted);
         return context;
     }
@@ -198,5 +200,28 @@ public class TextToSqlService {
                 + (user.getRole() == UserRole.MANAGER
                 ? " WHERE d.dept_id = '" + user.getDepartmentId() + "'" : "")
                 + " GROUP BY d.dept_name LIMIT 10";
+    }
+
+    private String inferChartTitle(String question) {
+        String q = question.toLowerCase(Locale.ROOT);
+        if (q.contains("加班") && (q.contains("对比") || q.contains("排名") || q.contains("各部门"))) {
+            return "各部门加班时长对比";
+        }
+        if (q.contains("离职") || q.contains("风险")) {
+            return "离职风险分布";
+        }
+        if (q.contains("满意度")) {
+            return "员工满意度分布";
+        }
+        if (q.contains("人数") || q.contains("编制")) {
+            return "各部门在职人数";
+        }
+        if (q.contains("薪酬") || q.contains("工资") || q.contains("薪资")) {
+            return "各部门平均薪酬";
+        }
+        if (q.contains("绩效")) {
+            return "绩效数据对比";
+        }
+        return "查询结果统计";
     }
 }

@@ -27,6 +27,7 @@ public class RagChatService {
     private final ChatMessageRepository messageRepository;
     private final PermissionService permissionService;
     private final ObjectMapper objectMapper;
+    private final ChartDataService chartDataService;
 
     @Transactional
     public ChatResponse ask(ChatRequest request) {
@@ -45,8 +46,8 @@ public class RagChatService {
         String answer = llmService.generateAnswer(question, contexts);
         List<SourceReference> sources = llmService.toSourceReferences(contexts);
 
-        saveMessage(session.getId(), "user", question, null);
-        saveMessage(session.getId(), "assistant", answer, sources);
+        saveMessage(session.getId(), "user", question, null, null);
+        saveMessage(session.getId(), "assistant", answer, sources, null);
 
         ChatResponse response = new ChatResponse();
         response.setSessionId(session.getId());
@@ -70,13 +71,17 @@ public class RagChatService {
         source.setRelevance(1.0);
         List<SourceReference> sources = List.of(source);
 
-        saveMessage(session.getId(), "user", question, null);
-        saveMessage(session.getId(), "assistant", answer, sources);
+        List<ChartConfig> charts = chartDataService.buildCharts(
+                dataContext.getQueryRows(), dataContext.getChartTitle());
+
+        saveMessage(session.getId(), "user", question, null, null);
+        saveMessage(session.getId(), "assistant", answer, sources, charts);
 
         ChatResponse response = new ChatResponse();
         response.setSessionId(session.getId());
         response.setAnswer(answer);
         response.setSources(sources);
+        response.setCharts(charts.isEmpty() ? null : charts);
         return response;
     }
 
@@ -101,7 +106,8 @@ public class RagChatService {
         return sessionRepository.save(session);
     }
 
-    private void saveMessage(Long sessionId, String role, String content, List<SourceReference> sources) {
+    private void saveMessage(Long sessionId, String role, String content,
+                             List<SourceReference> sources, List<ChartConfig> charts) {
         ChatMessage message = new ChatMessage();
         message.setSessionId(sessionId);
         message.setRole(role);
@@ -109,6 +115,12 @@ public class RagChatService {
         if (sources != null && !sources.isEmpty()) {
             try {
                 message.setSources(objectMapper.writeValueAsString(sources));
+            } catch (Exception ignored) {
+            }
+        }
+        if (charts != null && !charts.isEmpty()) {
+            try {
+                message.setCharts(objectMapper.writeValueAsString(charts));
             } catch (Exception ignored) {
             }
         }
@@ -146,6 +158,12 @@ public class RagChatService {
                     if (m.getSources() != null) {
                         try {
                             r.setSources(objectMapper.readValue(m.getSources(), new TypeReference<List<SourceReference>>() {}));
+                        } catch (Exception ignored) {
+                        }
+                    }
+                    if (m.getCharts() != null) {
+                        try {
+                            r.setCharts(objectMapper.readValue(m.getCharts(), new TypeReference<List<ChartConfig>>() {}));
                         } catch (Exception ignored) {
                         }
                     }

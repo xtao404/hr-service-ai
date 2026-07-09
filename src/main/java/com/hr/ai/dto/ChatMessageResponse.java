@@ -10,5 +10,6 @@ public class ChatMessageResponse {
     private String role;
     private String content;
     private List<SourceReference> sources;
+    private List<ChartConfig> charts;
     private String createdAt;
 }

@@ -25,5 +25,8 @@ public class ChatMessage {
     @Column(columnDefinition = "LONGTEXT")
     private String sources;
 
+    @Column(columnDefinition = "LONGTEXT")
+    private String charts;
+
     private LocalDateTime createdAt = LocalDateTime.now();
 }
