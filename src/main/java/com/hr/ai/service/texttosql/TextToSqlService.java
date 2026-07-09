@@ -72,6 +72,7 @@ public class TextToSqlService {
         }
 
         String formatted = sqlExecutionService.formatResults(rows);
+        formatted = applyManagerScopeNoteIfNeeded(formatted, question, user);
 
         HrDataContext context = new HrDataContext();
         context.setIntent(HrQueryIntent.TEXT_TO_SQL);
@@ -83,6 +84,31 @@ public class TextToSqlService {
         context.setChartTitle(inferChartTitle(question));
         context.setDataText(formatted);
         return context;
+    }
+
+    private String applyManagerScopeNoteIfNeeded(String formatted, String question, UserPrincipal user) {
+        if (user.getRole() != UserRole.MANAGER || formatted == null || formatted.isBlank()) {
+            return formatted;
+        }
+        if (!containsCompanyScopeKeyword(question)) {
+            return formatted;
+        }
+        if (formatted.startsWith("说明: 当前角色为部门经理")) {
+            return formatted;
+        }
+        return "说明: 当前角色为部门经理，仅可查看本部门数据，以下结果不代表全公司总量。\n" + formatted;
+    }
+
+    private boolean containsCompanyScopeKeyword(String question) {
+        if (question == null || question.isBlank()) {
+            return false;
+        }
+        String q = question.toLowerCase(Locale.ROOT);
+        return q.contains("公司")
+                || q.contains("全公司")
+                || q.contains("整体")
+                || q.contains("全部")
+                || q.contains("总人数");
     }
 
     private String prepareSql(String rawSql, UserPrincipal user, boolean canViewSalary) {

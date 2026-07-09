@@ -64,7 +64,7 @@ public class QueryTraceBuilder {
                 ? "已完成数据分析、结果整理与回答生成。"
                 : "已完成业务数据读取与回答生成。");
         trace.setIntent(intent.name());
-        trace.setIntentLabel(INTENT_LABELS.getOrDefault(intent, intent.name()));
+        trace.setIntentLabel(resolveIntentLabel(intent, user));
         trace.setDataSource(context.getDataSource());
         trace.setQueryMethod(context.getQueryMethod());
         trace.setRowCount(context.getRowCount() != null
@@ -73,6 +73,13 @@ public class QueryTraceBuilder {
         trace.setPermissionNote(buildPermissionNote(user));
         trace.setEmployees(extractEmployees(context.getQueryRows()));
         return trace;
+    }
+
+    private String resolveIntentLabel(HrQueryIntent intent, UserPrincipal user) {
+        if (intent == HrQueryIntent.COMPANY_OVERVIEW && user.getRole() == UserRole.MANAGER) {
+            return "部门范围概览";
+        }
+        return INTENT_LABELS.getOrDefault(intent, intent.name());
     }
 
     private String buildPermissionNote(UserPrincipal user) {

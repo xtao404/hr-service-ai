@@ -5,6 +5,7 @@ import com.hr.ai.dto.HrDataContext;
 import com.hr.ai.dto.ManagerReportResponse;
 import com.hr.ai.dto.ReportMetric;
 import com.hr.ai.dto.SourceReference;
+import com.hr.ai.model.enums.UserRole;
 import com.hr.ai.security.PermissionService;
 import com.hr.ai.security.UserPrincipal;
 import lombok.RequiredArgsConstructor;
@@ -52,10 +53,16 @@ public class HrIntegrationService {
         }
 
         String detail = llmService.generateReport(query, dataContext.getDataText());
+        if (user.getRole() == UserRole.MANAGER) {
+            detail = "说明：当前角色为部门经理，以下报告仅基于本部门可访问数据生成，不代表全公司口径。\n\n" + detail;
+        }
 
         ManagerReportResponse response = new ManagerReportResponse();
-        response.setReportTitle(deptName + " - " + reportPeriod + " HR分析报告");
-        response.setSummary("已完成「" + query + "」的数据库查询与分析，共涉及 " + metrics.size() + " 项核心指标。");
+        response.setReportTitle(deptName + " - " + reportPeriod
+                + (user.getRole() == UserRole.MANAGER ? " 部门HR分析报告" : " HR分析报告"));
+        response.setSummary(user.getRole() == UserRole.MANAGER
+                ? "已完成「" + query + "」的本部门数据查询与分析，共涉及 " + metrics.size() + " 项核心指标。"
+                : "已完成「" + query + "」的数据库查询与分析，共涉及 " + metrics.size() + " 项核心指标。");
         response.setDetail(detail);
         response.setMetrics(metrics);
 

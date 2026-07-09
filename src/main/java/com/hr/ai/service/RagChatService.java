@@ -68,13 +68,9 @@ public class RagChatService {
             emitter.complete();
         } catch (Exception e) {
             log.error("流式问答失败", e);
-            try {
-                String message = e.getMessage() != null ? e.getMessage() : "流式问答失败";
-                emitter.send(SseEmitter.event().name("error").data(message));
-                emitter.complete();
-            } catch (IOException ignored) {
-                emitter.complete();
-            }
+            String message = e.getMessage() != null ? e.getMessage() : "流式问答失败";
+            sendSafeEvent(emitter, "error", message);
+            emitter.complete();
         }
     }
 
@@ -82,6 +78,12 @@ public class RagChatService {
         UserPrincipal user = permissionService.currentUser();
         String question = request.getQuestion();
         ChatSession session = resolveSession(request.getSessionId(), user.getId(), question);
+
+        PreparedChatResult guarded = guardSensitiveQuestion(user, session, question, progressListener);
+        if (guarded != null) {
+            return guarded;
+        }
+
         HrQueryIntent intent = hrDataQueryService.detectIntent(question, user);
         emitIntentProgress(progressListener, intent);
 
@@ -89,6 +91,54 @@ public class RagChatService {
             return prepareDatabaseResult(user, session, question, intent, progressListener);
         }
         return prepareKnowledgeResult(session, question, progressListener);
+    }
+
+    private PreparedChatResult guardSensitiveQuestion(UserPrincipal user, ChatSession session, String question,
+                                                     Consumer<QueryTrace> progressListener) {
+        if (question == null || question.isBlank()) {
+            return null;
+        }
+        String q = question.toLowerCase();
+        boolean isSalary = q.contains("工资") || q.contains("薪资") || q.contains("薪酬");
+        if (!isSalary) {
+            return null;
+        }
+
+        // 员工/部门经理：不允许查询薪酬金额，避免被 Text-to-SQL 误导为“查不到字段”
+        if (user.getRole() == com.hr.ai.model.enums.UserRole.EMPLOYEE
+                || user.getRole() == com.hr.ai.model.enums.UserRole.MANAGER) {
+            String msg = user.getRole() == com.hr.ai.model.enums.UserRole.MANAGER
+                    ? "薪酬属于敏感信息，部门经理无权查询员工薪酬明细，请联系HRBP或HR管理员。"
+                    : "薪酬属于敏感信息，普通员工无法通过系统查询具体金额。"
+                    + "如需查看工资，请通过工资条/HR系统自助入口或联系HR。";
+
+            HrDataContext ctx = new HrDataContext();
+            ctx.setIntent(HrQueryIntent.PERSONAL_SALARY);
+            ctx.setDataSource("权限拦截");
+            ctx.setQueryMethod("guard");
+            ctx.setDataText(msg);
+
+            QueryTrace trace = queryTraceBuilder.buildDataTrace(ctx, user);
+            trace.setStatus("DONE");
+            trace.setStage("COMPLETE");
+            trace.setStageLabel("权限拦截");
+            trace.setProgressMessage("已拦截敏感信息查询请求。");
+            emitProgress(progressListener, trace);
+
+            SourceReference source = new SourceReference();
+            source.setTitle("权限控制");
+            source.setSnippet("薪酬为敏感信息，已按角色权限拦截。");
+            source.setRelevance(1.0);
+
+            return PreparedChatResult.builder()
+                    .sessionId(session.getId())
+                    .answer(msg)
+                    .sources(List.of(source))
+                    .trace(trace)
+                    .build();
+        }
+
+        return null;
     }
 
     private PreparedChatResult prepareKnowledgeResult(ChatSession session, String question,
@@ -265,6 +315,10 @@ public class RagChatService {
     private String resolveIntentLabel(HrQueryIntent intent) {
         if (intent == null) {
             return null;
+        }
+        UserPrincipal user = permissionService.currentUser();
+        if (intent == HrQueryIntent.COMPANY_OVERVIEW && user.getRole() == com.hr.ai.model.enums.UserRole.MANAGER) {
+            return "部门范围概览";
         }
         return switch (intent) {
             case KNOWLEDGE -> "制度知识库检索";

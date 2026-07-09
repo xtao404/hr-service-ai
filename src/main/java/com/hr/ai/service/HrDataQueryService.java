@@ -54,6 +54,10 @@ public class HrDataQueryService {
         }
 
         if (!presetQueryProperties.isEnabled()) {
+            HrDataContext guard = guardWhenPresetDisabled(question, user);
+            if (guard != null) {
+                return guard;
+            }
             HrDataContext context = new HrDataContext();
             context.setIntent(HrQueryIntent.KNOWLEDGE);
             context.setDataSource("知识库 knowledge_documents");
@@ -82,6 +86,42 @@ public class HrDataQueryService {
             case COMPANY_OVERVIEW -> fillCompanyOverview(context, user);
             default -> context.setDataText("");
         }
+        applyManagerScopeNoteIfNeeded(context, question, user);
+        return context;
+    }
+
+    /**
+     * preset 关闭时，对部分敏感/高误导问题做明确拦截，避免降级到知识库产生胡乱解释。
+     * 返回 null 表示不拦截，按原逻辑降级。
+     */
+    private HrDataContext guardWhenPresetDisabled(String question, UserPrincipal user) {
+        if (question == null || question.isBlank()) {
+            return null;
+        }
+        String q = question.toLowerCase();
+
+        boolean salary = q.contains("工资") || q.contains("薪资") || q.contains("薪酬");
+        if (!salary) {
+            return null;
+        }
+
+        // HRBP / HR_ADMIN 可走 Text-to-SQL（未必所有场景允许，但不在这里拦截）
+        if (user.getRole() == UserRole.HRBP || user.getRole() == UserRole.HR_ADMIN) {
+            return null;
+        }
+
+        HrDataContext context = new HrDataContext();
+        context.setIntent(HrQueryIntent.PERSONAL_SALARY);
+        context.setDataSource("权限拦截");
+        context.setQueryMethod("guard");
+
+        if (user.getRole() == UserRole.MANAGER) {
+            context.setDataText("薪酬属于敏感信息，部门经理无权查询员工薪酬明细，请联系HRBP或HR管理员。");
+            return context;
+        }
+
+        // EMPLOYEE：无论问自己还是他人，都不给出金额（避免把问题降级到知识库胡说）
+        context.setDataText("薪酬属于敏感信息，普通员工无法通过系统查询具体金额。如需查看工资，请通过工资条/HR系统自助入口或联系HR。");
         return context;
     }
 
@@ -665,6 +705,9 @@ public class HrDataQueryService {
         if (user.getRole() == UserRole.EMPLOYEE) {
             return "无权查看公司整体HR数据。";
         }
+        if (user.getRole() == UserRole.MANAGER) {
+            return queryManagerDepartmentOverview(user);
+        }
         String quarter = questionAnalyzer.currentQuarter();
         StringJoiner sj = new StringJoiner("\n");
         sj.add("=== 公司HR数据概览 ===");
@@ -684,6 +727,50 @@ public class HrDataQueryService {
                     dept.getDeptName(), count, overtime != null ? overtime : 0));
         });
         return sj.toString();
+    }
+
+    private String queryManagerDepartmentOverview(UserPrincipal user) {
+        String deptId = resolveDeptId(user);
+        permissionService.checkDepartmentAccess(deptId);
+        String quarter = questionAnalyzer.currentQuarter();
+        String deptName = departmentRepository.findByDeptId(deptId).map(BizDepartment::getDeptName).orElse(deptId);
+        long count = employeeRepository.countByDeptIdAndStatus(deptId, "ACTIVE");
+        Double overtime = attendanceRepository.sumOvertimeByDeptAndQuarter(deptId, quarter);
+        List<BizTurnoverRisk> risks = turnoverRiskRepository.findByDeptAndRiskLevels(deptId, HIGH_RISK_LEVELS);
+
+        StringJoiner sj = new StringJoiner("\n");
+        sj.add("说明: 当前角色为部门经理，仅可查看本部门数据，以下结果不代表全公司总量。");
+        sj.add("部门: " + deptName + " (" + deptId + ")");
+        sj.add("统计季度: " + quarter);
+        sj.add("本部门在职人数: " + count);
+        sj.add("本部门高风险离职预警: " + risks.size() + " 人");
+        sj.add("本部门总加班时长: " + String.format("%.1f", overtime != null ? overtime : 0) + " 小时");
+        return sj.toString();
+    }
+
+    private void applyManagerScopeNoteIfNeeded(HrDataContext context, String question, UserPrincipal user) {
+        if (user.getRole() != UserRole.MANAGER || context.getDataText() == null || context.getDataText().isBlank()) {
+            return;
+        }
+        if (!containsCompanyScopeKeyword(question)) {
+            return;
+        }
+        if (context.getDataText().startsWith("说明: 当前角色为部门经理")) {
+            return;
+        }
+        context.setDataText("说明: 当前角色为部门经理，仅可查看本部门数据，以下结果不代表全公司总量。\n"
+                + context.getDataText());
+    }
+
+    private boolean containsCompanyScopeKeyword(String question) {
+        if (question == null || question.isBlank()) {
+            return false;
+        }
+        return question.contains("公司")
+                || question.contains("全公司")
+                || question.contains("整体")
+                || question.contains("全部")
+                || question.contains("总人数");
     }
 
     private BizEmployee requireEmployee(String employeeId) {

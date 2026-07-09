@@ -13,11 +13,15 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 
 @RestController
 @RequestMapping("/api/chat")
 @RequiredArgsConstructor
 public class ChatController {
+
+    private static final long STREAM_START_DELAY_MS = 25L;
 
     private final RagChatService chatService;
 
@@ -40,7 +44,8 @@ public class ChatController {
                 RequestContextHolder.resetRequestAttributes();
             }
         });
-        CompletableFuture.runAsync(task);
+        Executor delayedExecutor = CompletableFuture.delayedExecutor(STREAM_START_DELAY_MS, TimeUnit.MILLISECONDS);
+        CompletableFuture.runAsync(task, delayedExecutor);
         return emitter;
     }
 
