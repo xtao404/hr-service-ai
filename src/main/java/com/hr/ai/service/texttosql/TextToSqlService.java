@@ -78,7 +78,7 @@ public class TextToSqlService {
         context.setRowCount(rows.size());
         context.setQueryRows(rows);
         context.setChartTitle(inferChartTitle(question));
-        context.setDataText("执行SQL:\n" + finalSql + "\n\n" + formatted);
+        context.setDataText(formatted);
         return context;
     }
 

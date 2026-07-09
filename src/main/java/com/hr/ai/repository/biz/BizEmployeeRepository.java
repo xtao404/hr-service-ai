@@ -10,6 +10,8 @@ public interface BizEmployeeRepository extends JpaRepository<BizEmployee, Long> 
 
     Optional<BizEmployee> findByEmployeeId(String employeeId);
 
+    List<BizEmployee> findByName(String name);
+
     List<BizEmployee> findByDeptIdAndStatus(String deptId, String status);
 
     long countByDeptIdAndStatus(String deptId, String status);

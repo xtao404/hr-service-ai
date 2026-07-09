@@ -11,5 +11,7 @@ public class ChatMessageResponse {
     private String content;
     private List<SourceReference> sources;
     private List<ChartConfig> charts;
+    private QueryTrace trace;
+    private List<ActionSuggestion> actions;
     private String createdAt;
 }

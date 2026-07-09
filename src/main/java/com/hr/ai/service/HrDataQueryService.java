@@ -245,11 +245,28 @@ public class HrDataQueryService {
         permissionService.checkEmployeeAccess(employeeId);
         BizEmployee emp = employeeRepository.findByEmployeeId(employeeId)
                 .orElseThrow(() -> new RuntimeException("未找到员工数据: " + employeeId));
+        return buildEmployeeProfile(emp);
+    }
 
+    public EmployeeProfileResponse getEmployeeProfileByName(String name) {
+        List<BizEmployee> employees = employeeRepository.findByName(name);
+        if (employees.isEmpty()) {
+            throw new RuntimeException("未找到员工: " + name);
+        }
+        BizEmployee emp = employees.get(0);
+        permissionService.checkEmployeeAccess(emp.getEmployeeId());
+        return buildEmployeeProfile(emp);
+    }
+
+    private EmployeeProfileResponse buildEmployeeProfile(BizEmployee emp) {
+        String employeeId = emp.getEmployeeId();
         EmployeeProfileResponse profile = new EmployeeProfileResponse();
-        profile.setEmployeeId(emp.getEmployeeId());
+        profile.setEmployeeId(employeeId);
         profile.setName(emp.getName());
         profile.setPosition(emp.getPosition());
+        profile.setHireDate(emp.getHireDate() != null ? emp.getHireDate().toString() : null);
+        profile.setEducation(emp.getEducation());
+        profile.setSatisfactionScore(emp.getSatisfactionScore());
 
         departmentRepository.findByDeptId(emp.getDeptId())
                 .ifPresent(dept -> profile.setDepartmentName(dept.getDeptName()));
@@ -258,10 +275,32 @@ public class HrDataQueryService {
                 .ifPresent(att -> {
                     profile.setLeaveBalance(att.getLeaveBalance());
                     profile.setOvertimeHours(att.getOvertimeHours());
+                    profile.setLateCount(att.getLateCount());
+                    profile.setAbsentDays(att.getAbsentDays());
                 });
 
-        salaryRepository.findByEmployeeId(employeeId)
-                .ifPresent(sal -> profile.setSalaryBand(sal.getSalaryBand()));
+        if (permissionService.canViewSalary()
+                || permissionService.currentUser().getEmployeeId().equals(employeeId)) {
+            salaryRepository.findByEmployeeId(employeeId).ifPresent(sal -> {
+                profile.setSalaryBand(sal.getSalaryBand());
+                if (permissionService.canViewSalary()) {
+                    profile.setBaseSalary(sal.getBaseSalary());
+                }
+            });
+        }
+
+        performanceRepository.findFirstByEmployeeIdOrderByYearDescQuarterDesc(employeeId)
+                .ifPresent(perf -> {
+                    profile.setPerformanceRating(perf.getRating());
+                    profile.setPerformanceScore(perf.getScore());
+                });
+
+        turnoverRiskRepository.findByEmployeeId(employeeId).ifPresent(risk -> {
+            profile.setRiskScore(risk.getRiskScore());
+            profile.setRiskLevel(risk.getRiskLevel());
+            profile.setRiskFactors(risk.getFactors());
+            profile.setRiskRecommendation(risk.getRecommendation());
+        });
 
         return profile;
     }

@@ -44,6 +44,7 @@ public class LlmService {
             3. 如果数据不足以回答问题，请明确告知
             4. 涉及薪酬等敏感数据时，仅复述查询结果中的内容，不额外推测
             5. 回答末尾注明"以上数据来源于HR业务系统"
+            6. 不要在回答中展示或提及 SQL 语句
             """;
 
     private final LlmProperties llmProperties;
