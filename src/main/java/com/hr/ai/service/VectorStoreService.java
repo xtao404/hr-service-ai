@@ -56,7 +56,15 @@ public class VectorStoreService {
             Map.entry("辞职", KnowledgeCategory.OFFBOARDING)
     );
 
+    public boolean isSearchEnabled() {
+        return ragProperties.isEnabled();
+    }
+
     public List<ScoredDocument> search(String query) {
+        if (!ragProperties.isEnabled()) {
+            return List.of();
+        }
+
         List<KnowledgeDocument> allDocs = documentRepository.findAll();
         if (allDocs.isEmpty()) {
             return List.of();

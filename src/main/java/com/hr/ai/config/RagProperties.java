@@ -9,6 +9,9 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "hr.ai.rag")
 public class RagProperties {
 
+    /** 是否启用知识库向量/关键词检索；默认关闭，开启后才走 RAG 检索链路 */
+    private boolean enabled = false;
+
     /** 检索返回的最大文档数 */
     private int topK = 3;
 

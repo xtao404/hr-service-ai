@@ -55,6 +55,7 @@ hr:
       secret: hr-ai-platform-secret-key-change-in-production-2024
       expiration-ms: 86400000
     rag:
+      enabled: false
       top-k: 3
       similarity-threshold: 0.15
       min-confidence-for-answer: 0.15
