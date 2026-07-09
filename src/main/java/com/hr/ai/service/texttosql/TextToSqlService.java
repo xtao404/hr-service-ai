@@ -1,0 +1,202 @@
+package com.hr.ai.service.texttosql;
+
+import com.hr.ai.config.LlmProperties;
+import com.hr.ai.config.TextToSqlProperties;
+import com.hr.ai.dto.HrDataContext;
+import com.hr.ai.model.enums.HrQueryIntent;
+import com.hr.ai.model.enums.UserRole;
+import com.hr.ai.security.PermissionService;
+import com.hr.ai.security.UserPrincipal;
+import com.hr.ai.service.QwenChatClient;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class TextToSqlService {
+
+    private final TextToSqlProperties textToSqlProperties;
+    private final LlmProperties llmProperties;
+    private final QwenChatClient qwenChatClient;
+    private final SqlPromptBuilder sqlPromptBuilder;
+    private final SqlSecurityValidator sqlSecurityValidator;
+    private final SqlPermissionRewriter sqlPermissionRewriter;
+    private final SqlExecutionService sqlExecutionService;
+    private final PermissionService permissionService;
+
+    public HrDataContext query(String question, UserPrincipal user) {
+        if (!textToSqlProperties.isEnabled()) {
+            throw new IllegalArgumentException("Text-to-SQL 功能未启用");
+        }
+
+        String systemPrompt = sqlPromptBuilder.buildSystemPrompt(user);
+        boolean canViewSalary = permissionService.canViewSalary();
+
+        String rawSql = generateInitialSql(question, user, systemPrompt);
+        String finalSql = null;
+        List<Map<String, Object>> rows = null;
+
+        int maxAttempts = textToSqlProperties.isSelfCorrectionEnabled() && !llmProperties.isMockMode()
+                ? 1 + textToSqlProperties.getMaxRetries()
+                : 1;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                String sql = prepareSql(rawSql, user, canViewSalary);
+                rows = sqlExecutionService.executeQuery(sql);
+                finalSql = sql;
+                if (attempt > 1) {
+                    log.info("Text-to-SQL 第 {} 次尝试成功", attempt);
+                }
+                break;
+            } catch (Exception e) {
+                log.warn("Text-to-SQL 第 {} 次尝试失败: {}", attempt, e.getMessage());
+                if (attempt >= maxAttempts || llmProperties.isMockMode()) {
+                    throw e instanceof RuntimeException re ? re
+                            : new RuntimeException(e.getMessage(), e);
+                }
+                String correctionPrompt = sqlPromptBuilder.buildCorrectionPrompt(
+                        question, rawSql, e.getMessage());
+                rawSql = qwenChatClient.chat(systemPrompt, correctionPrompt,
+                        textToSqlProperties.getTemperature());
+            }
+        }
+
+        String formatted = sqlExecutionService.formatResults(rows);
+
+        HrDataContext context = new HrDataContext();
+        context.setIntent(HrQueryIntent.TEXT_TO_SQL);
+        context.setDataSource("HR业务数据库 (Text-to-SQL)");
+        context.setQueryMethod("text-to-sql");
+        context.setGeneratedSql(finalSql);
+        context.setRowCount(rows.size());
+        context.setDataText("执行SQL:\n" + finalSql + "\n\n" + formatted);
+        return context;
+    }
+
+    private String prepareSql(String rawSql, UserPrincipal user, boolean canViewSalary) {
+        String sql = sqlSecurityValidator.validateAndSanitize(rawSql, user, canViewSalary);
+        sql = sqlPermissionRewriter.injectPermissionFilter(sql, user);
+        enforcePermissionFilter(sql, user);
+        return sql;
+    }
+
+    private String generateInitialSql(String question, UserPrincipal user, String systemPrompt) {
+        if (llmProperties.isMockMode()) {
+            return generateMockSql(question, user);
+        }
+        return qwenChatClient.chat(systemPrompt, sqlPromptBuilder.buildUserPrompt(question),
+                textToSqlProperties.getTemperature());
+    }
+
+    private void enforcePermissionFilter(String sql, UserPrincipal user) {
+        String upper = sql.toUpperCase(Locale.ROOT);
+        switch (user.getRole()) {
+            case EMPLOYEE -> {
+                if (!sql.contains(user.getEmployeeId())) {
+                    throw new IllegalArgumentException(
+                            "安全拦截：员工只能查询本人（" + user.getEmployeeId() + "）相关数据");
+                }
+                if (upper.contains("BIZ_SALARY")) {
+                    throw new IllegalArgumentException("安全拦截：员工无权查询薪酬数据");
+                }
+            }
+            case MANAGER -> {
+                if (!sql.contains(user.getDepartmentId())) {
+                    throw new IllegalArgumentException(
+                            "安全拦截：部门经理只能查询本部门（" + user.getDepartmentId() + "）数据");
+                }
+                if (upper.contains("BIZ_SALARY")) {
+                    throw new IllegalArgumentException("安全拦截：部门经理无权查询薪酬明细");
+                }
+            }
+            default -> { }
+        }
+    }
+
+    private String generateMockSql(String question, UserPrincipal user) {
+        String q = question.toLowerCase(Locale.ROOT);
+
+        if (user.getRole() == UserRole.EMPLOYEE) {
+            if (q.contains("加班")) {
+                return "SELECT e.name AS 姓名, a.overtime_hours AS 加班时长, a.quarter AS 季度 "
+                        + "FROM biz_employee e "
+                        + "JOIN biz_attendance a ON e.employee_id = a.employee_id "
+                        + "WHERE e.employee_id = '" + user.getEmployeeId() + "' AND a.quarter = '2026-Q1' LIMIT 10";
+            }
+            if (q.contains("绩效")) {
+                return "SELECT e.name AS 姓名, p.rating AS 绩效评级, p.score AS 绩效分数 "
+                        + "FROM biz_employee e "
+                        + "JOIN biz_performance p ON e.employee_id = p.employee_id "
+                        + "WHERE e.employee_id = '" + user.getEmployeeId() + "' LIMIT 10";
+            }
+            return "SELECT e.name AS 姓名, e.position AS 岗位, d.dept_name AS 部门 "
+                    + "FROM biz_employee e "
+                    + "JOIN biz_department d ON e.dept_id = d.dept_id "
+                    + "WHERE e.employee_id = '" + user.getEmployeeId() + "' LIMIT 10";
+        }
+
+        String deptFilter = user.getRole() == UserRole.MANAGER
+                ? " AND e.dept_id = '" + user.getDepartmentId() + "'"
+                : "";
+
+        if (q.contains("对比") || q.contains("各部门") || q.contains("哪个部门") || q.contains("排名")) {
+            return "SELECT d.dept_name AS 部门名称, SUM(a.overtime_hours) AS 总加班时长 "
+                    + "FROM biz_department d JOIN biz_employee e ON d.dept_id = e.dept_id "
+                    + "JOIN biz_attendance a ON e.employee_id = a.employee_id "
+                    + "WHERE a.quarter = '2026-Q1' AND e.status = 'ACTIVE'" + deptFilter
+                    + " GROUP BY d.dept_name ORDER BY 总加班时长 DESC LIMIT 10";
+        }
+        if (q.contains("满意度")) {
+            return "SELECT e.name AS 姓名, d.dept_name AS 部门, e.satisfaction_score AS 满意度 "
+                    + "FROM biz_employee e JOIN biz_department d ON e.dept_id = d.dept_id "
+                    + "WHERE e.status = 'ACTIVE' AND e.satisfaction_score < 7" + deptFilter
+                    + " ORDER BY e.satisfaction_score ASC LIMIT 20";
+        }
+        if (q.contains("绩效") && q.contains("加班")) {
+            return "SELECT e.name AS 姓名, p.rating AS 绩效评级, p.score AS 绩效分数, a.overtime_hours AS 加班时长 "
+                    + "FROM biz_employee e "
+                    + "JOIN biz_performance p ON e.employee_id = p.employee_id "
+                    + "JOIN biz_attendance a ON e.employee_id = a.employee_id "
+                    + "WHERE p.rating = 'C' AND a.overtime_hours > 50 AND a.quarter = '2026-Q1'"
+                    + deptFilter + " LIMIT 20";
+        }
+        if (q.contains("离职") || q.contains("风险")) {
+            return "SELECT e.name AS 姓名, d.dept_name AS 部门, r.risk_score AS 风险分, "
+                    + "r.risk_level AS 风险等级, r.factors AS 风险因素 "
+                    + "FROM biz_turnover_risk r JOIN biz_employee e ON r.employee_id = e.employee_id "
+                    + "JOIN biz_department d ON e.dept_id = d.dept_id "
+                    + "WHERE r.risk_level IN ('HIGH','CRITICAL')" + deptFilter
+                    + " ORDER BY r.risk_score DESC LIMIT 20";
+        }
+        if (q.contains("人数") || q.contains("headcount") || q.contains("编制")) {
+            return "SELECT d.dept_name AS 部门名称, COUNT(e.id) AS 在职人数 "
+                    + "FROM biz_department d "
+                    + "LEFT JOIN biz_employee e ON d.dept_id = e.dept_id AND e.status = 'ACTIVE'"
+                    + (user.getRole() == UserRole.MANAGER
+                    ? " WHERE d.dept_id = '" + user.getDepartmentId() + "'" : "")
+                    + " GROUP BY d.dept_name LIMIT 10";
+        }
+        if (q.contains("薪酬") || q.contains("工资") || q.contains("薪资")) {
+            if (user.getRole() == UserRole.MANAGER) {
+                throw new IllegalArgumentException("部门经理无权查询薪酬数据");
+            }
+            return "SELECT d.dept_name AS 部门名称, AVG(s.base_salary) AS 平均月薪 "
+                    + "FROM biz_salary s JOIN biz_employee e ON s.employee_id = e.employee_id "
+                    + "JOIN biz_department d ON e.dept_id = d.dept_id "
+                    + "WHERE e.status = 'ACTIVE' GROUP BY d.dept_name LIMIT 10";
+        }
+        return "SELECT d.dept_name AS 部门名称, COUNT(e.id) AS 在职人数 "
+                + "FROM biz_department d "
+                + "LEFT JOIN biz_employee e ON d.dept_id = e.dept_id AND e.status = 'ACTIVE'"
+                + (user.getRole() == UserRole.MANAGER
+                ? " WHERE d.dept_id = '" + user.getDepartmentId() + "'" : "")
+                + " GROUP BY d.dept_name LIMIT 10";
+    }
+}

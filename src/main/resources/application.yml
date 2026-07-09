@@ -1,0 +1,84 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: hr-ai-platform
+  datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
+    url: jdbc:mysql://localhost:3306/hr_ai?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8&allowPublicKeyRetrieval=true
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    druid:
+      initial-size: 5
+      min-idle: 5
+      max-active: 30
+      max-wait: 60000
+      time-between-eviction-runs-millis: 60000
+      min-evictable-idle-time-millis: 300000
+      validation-query: SELECT 1
+      test-while-idle: true
+      test-on-borrow: false
+      test-on-return: false
+      pool-prepared-statements: true
+      max-pool-prepared-statement-per-connection-size: 20
+      filter:
+        stat:
+          enabled: true
+          log-slow-sql: true
+          slow-sql-millis: 2000
+        wall:
+          enabled: false
+      stat-view-servlet:
+        enabled: true
+        url-pattern: /druid/*
+        login-username: admin
+        login-password: admin123
+        reset-enable: false
+      web-stat-filter:
+        enabled: true
+        url-pattern: /*
+        exclusions: "*.js,*.gif,*.jpg,*.png,*.css,*.ico,/druid/*,/api/*"
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
+
+hr:
+  ai:
+    jwt:
+      secret: hr-ai-platform-secret-key-change-in-production-2024
+      expiration-ms: 86400000
+    rag:
+      top-k: 5
+      similarity-threshold: 0.08
+    knowledge:
+      max-chunk-size: 2000
+      allowed-extensions: pdf,doc,docx
+    llm:
+      provider: qwen
+      api-url: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+      api-key: sk-c969f84aae4f40b2b6e80c1a65bc9d03
+      model: qwen-plus
+      temperature: 0.3
+      timeout-seconds: 60
+    integration:
+      enabled: false
+      provider: mock
+      base-url: http://localhost:9090
+    text-to-sql:
+      enabled: true
+      max-rows: 100
+      temperature: 0.1
+      few-shot-enabled: true
+      self-correction-enabled: true
+      max-retries: 2
+
+logging:
+  level:
+    com.hr.ai: INFO
