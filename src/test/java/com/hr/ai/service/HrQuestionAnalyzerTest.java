@@ -69,6 +69,14 @@ class HrQuestionAnalyzerTest {
         }
 
         @Test
+        void benefitListing_withListKeyword_staysKnowledge() {
+            HrQuestionAnalyzer analyzer = analyzer();
+            UserPrincipal manager = user(UserRole.MANAGER, "M001", "D001");
+            assertEquals(HrQueryIntent.KNOWLEDGE, analyzer.analyze("列出福利类型", manager));
+            assertEquals(HrQueryIntent.KNOWLEDGE, analyzer.analyze("找出公司有哪些福利", manager));
+        }
+
+        @Test
         void namedEmployeeQuery_routeToTextToSql() {
             HrQuestionAnalyzer analyzer = analyzer();
             UserPrincipal manager = user(UserRole.MANAGER, "M001", "D001");
@@ -88,6 +96,9 @@ class HrQuestionAnalyzerTest {
             HrQuestionAnalyzer analyzer = analyzer();
             UserPrincipal employee = user(UserRole.EMPLOYEE, "E001", "D001");
             assertEquals(HrQueryIntent.KNOWLEDGE, analyzer.analyze("年假有多少天", employee));
+            assertEquals(HrQueryIntent.KNOWLEDGE, analyzer.analyze("列出公司福利类型", employee));
+            assertEquals(HrQueryIntent.KNOWLEDGE, analyzer.analyze("五险一金包括哪些", employee));
+            assertEquals(HrQueryIntent.KNOWLEDGE, analyzer.analyze("公司调薪政策是什么", employee));
         }
 
         @Test

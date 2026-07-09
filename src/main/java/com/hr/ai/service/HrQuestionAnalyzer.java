@@ -53,6 +53,10 @@ public class HrQuestionAnalyzer {
     public HrQueryIntent analyze(String question, UserPrincipal user) {
         String q = question.toLowerCase(Locale.ROOT);
 
+        if (isKnowledgeOnlyQuestion(q, question)) {
+            return HrQueryIntent.KNOWLEDGE;
+        }
+
         if (textToSqlProperties.isEnabled() && shouldUseTextToSql(q, user)) {
             return HrQueryIntent.TEXT_TO_SQL;
         }
@@ -183,6 +187,35 @@ public class HrQuestionAnalyzer {
         if (containsAny(q, "离职", "风险", "流失", "挽留")) return EmployeeQueryTopic.TURNOVER;
         if (containsAny(q, "满意度")) return EmployeeQueryTopic.SATISFACTION;
         return EmployeeQueryTopic.PROFILE;
+    }
+
+    /**
+     * 制度/福利/流程类问题走知识库 RAG，数据库中无对应结构化字段。
+     * 须在 {@link #shouldUseTextToSql} 之前判定，避免「列出」「哪些」等分析关键词误路由到 Text-to-SQL。
+     */
+    private boolean isKnowledgeOnlyQuestion(String q, String question) {
+        if (isPersonal(q) || extractNamedEmployeeQuery(question).isPresent()) {
+            return false;
+        }
+
+        if (containsAny(q, "有多少天") && containsAny(q, "年假", "假期", "病假", "事假", "调休")) {
+            return true;
+        }
+
+        boolean hasPolicyKeyword = containsAny(q,
+                "福利", "五险一金", "公积金", "社保", "体检", "补充福利", "商业保险",
+                "调薪政策", "薪酬政策", "工资政策", "考勤制度", "考勤管理",
+                "入职流程", "离职流程", "办理流程", "如何办理", "怎么办理",
+                "如何申请", "怎么申请", "扣款", "制度", "规定", "政策",
+                "食堂", "旅游", "礼品", "劳动合同");
+
+        if (!hasPolicyKeyword) {
+            return false;
+        }
+
+        return !containsAny(q,
+                "员工", "人数", "在职", "加班", "绩效", "满意度", "风险", "headcount",
+                "平均", "均值", "对比", "排名", "统计", "分布", "占比", "竞争力");
     }
 
     private boolean shouldUseTextToSql(String q, UserPrincipal user) {

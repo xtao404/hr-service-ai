@@ -32,6 +32,7 @@ public class SqlPromptBuilder {
             8. 多表关联优先：biz_employee e → 其他表 ON e.employee_id
             9. 过滤在职员工时使用 e.status = 'ACTIVE'
             10. 风险等级枚举：LOW / MEDIUM / HIGH / CRITICAL；绩效评级：A/B/C/D
+            11. 仅查询 Schema 中已列出的字段；福利/制度/流程类问题无对应表，不得虚构 benefit_type、description 等列
             """;
 
     public String buildSystemPrompt(UserPrincipal user) {

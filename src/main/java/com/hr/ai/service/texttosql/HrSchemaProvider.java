@@ -70,6 +70,7 @@ public class HrSchemaProvider {
                   - 绩效默认年份: 2026
                   - 高风险离职: risk_level IN ('HIGH','CRITICAL')
                   - 统计在职人数: e.status = 'ACTIVE'
+                  - 福利、五险一金、入职/离职流程、考勤扣款规则等制度政策不在数据库中，禁止编造 benefit_type 等字段
                 """;
     }
 
