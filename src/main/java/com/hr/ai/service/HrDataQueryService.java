@@ -42,6 +42,10 @@ public class HrDataQueryService {
         return questionAnalyzer.analyze(question, user);
     }
 
+    public void clearAnalyzerCache() {
+        questionAnalyzer.clearRequestCache();
+    }
+
     public boolean isDatabaseIntent(HrQueryIntent intent) {
         return intent != HrQueryIntent.KNOWLEDGE;
     }
@@ -57,6 +61,15 @@ public class HrDataQueryService {
             HrDataContext guard = guardWhenPresetDisabled(question, user);
             if (guard != null) {
                 return guard;
+            }
+            if (intent == HrQueryIntent.NAMED_EMPLOYEE) {
+                HrDataContext context = new HrDataContext();
+                context.setIntent(HrQueryIntent.NAMED_EMPLOYEE);
+                context.setDataSource("HR业务数据库");
+                context.setQueryMethod("text-to-sql");
+                fillNamedEmployee(context, user, question);
+                applyManagerScopeNoteIfNeeded(context, question, user);
+                return context;
             }
             HrDataContext context = new HrDataContext();
             context.setIntent(HrQueryIntent.KNOWLEDGE);
@@ -100,6 +113,11 @@ public class HrDataQueryService {
         }
         String q = question.toLowerCase();
 
+        HrDataContext namedEmployeeGuard = guardNamedEmployeeWhenPresetDisabled(question, user);
+        if (namedEmployeeGuard != null) {
+            return namedEmployeeGuard;
+        }
+
         boolean salary = q.contains("工资") || q.contains("薪资") || q.contains("薪酬");
         if (!salary) {
             return null;
@@ -123,6 +141,33 @@ public class HrDataQueryService {
         // EMPLOYEE：无论问自己还是他人，都不给出金额（避免把问题降级到知识库胡说）
         context.setDataText("薪酬属于敏感信息，普通员工无法通过系统查询具体金额。如需查看工资，请通过工资条/HR系统自助入口或联系HR。");
         return context;
+    }
+
+    /**
+     * preset 关闭时，员工查他人业务数据不应降级到知识库，避免 RAG 误答。
+     */
+    private HrDataContext guardNamedEmployeeWhenPresetDisabled(String question, UserPrincipal user) {
+        if (user.getRole() != UserRole.EMPLOYEE) {
+            return null;
+        }
+        return questionAnalyzer.extractNamedEmployeeQuery(question, user)
+                .filter(nq -> !isSelfNamedQuery(nq.getEmployeeName(), user))
+                .map(nq -> {
+                    HrDataContext context = new HrDataContext();
+                    context.setIntent(HrQueryIntent.NAMED_EMPLOYEE);
+                    context.setDataSource("权限拦截");
+                    context.setQueryMethod("guard");
+                    context.setDataText("无权查询其他员工的业务数据，如需了解同事信息请联系直属上级或HR。");
+                    return context;
+                })
+                .orElse(null);
+    }
+
+    private boolean isSelfNamedQuery(String employeeName, UserPrincipal user) {
+        if (employeeName == null || user.getName() == null) {
+            return false;
+        }
+        return user.getName().contains(employeeName);
     }
 
     private void fillPersonalProfile(HrDataContext context, UserPrincipal user) {
@@ -196,7 +241,7 @@ public class HrDataQueryService {
     }
 
     private void fillNamedEmployee(HrDataContext context, UserPrincipal user, String question) {
-        NamedEmployeeQuery namedQuery = questionAnalyzer.extractNamedEmployeeQuery(question).orElse(null);
+        NamedEmployeeQuery namedQuery = questionAnalyzer.extractNamedEmployeeQuery(question, user).orElse(null);
         if (namedQuery == null) {
             context.setDataText("无法识别要查询的员工姓名，请使用如「张三的加班时长」这类表述。");
             return;

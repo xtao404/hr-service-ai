@@ -75,22 +75,26 @@ public class RagChatService {
     }
 
     private PreparedChatResult prepareChat(ChatRequest request, Consumer<QueryTrace> progressListener) {
-        UserPrincipal user = permissionService.currentUser();
-        String question = request.getQuestion();
-        ChatSession session = resolveSession(request.getSessionId(), user.getId(), question);
+        try {
+            UserPrincipal user = permissionService.currentUser();
+            String question = request.getQuestion();
+            ChatSession session = resolveSession(request.getSessionId(), user.getId(), question);
 
-        PreparedChatResult guarded = guardSensitiveQuestion(user, session, question, progressListener);
-        if (guarded != null) {
-            return guarded;
+            PreparedChatResult guarded = guardSensitiveQuestion(user, session, question, progressListener);
+            if (guarded != null) {
+                return guarded;
+            }
+
+            HrQueryIntent intent = hrDataQueryService.detectIntent(question, user);
+            emitIntentProgress(progressListener, intent);
+
+            if (hrDataQueryService.isDatabaseIntent(intent)) {
+                return prepareDatabaseResult(user, session, question, intent, progressListener);
+            }
+            return prepareKnowledgeResult(session, question, progressListener);
+        } finally {
+            hrDataQueryService.clearAnalyzerCache();
         }
-
-        HrQueryIntent intent = hrDataQueryService.detectIntent(question, user);
-        emitIntentProgress(progressListener, intent);
-
-        if (hrDataQueryService.isDatabaseIntent(intent)) {
-            return prepareDatabaseResult(user, session, question, intent, progressListener);
-        }
-        return prepareKnowledgeResult(session, question, progressListener);
     }
 
     private PreparedChatResult guardSensitiveQuestion(UserPrincipal user, ChatSession session, String question,

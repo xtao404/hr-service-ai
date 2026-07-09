@@ -80,6 +80,10 @@ hr:
       max-retries: 2
     preset-query:
       enabled: false
+    intent-router:
+      mode: llm
+      fallback-to-rule: true
+      temperature: 0.1
 
 logging:
   level:

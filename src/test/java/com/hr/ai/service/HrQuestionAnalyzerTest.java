@@ -3,7 +3,6 @@ package com.hr.ai.service;
 import com.hr.ai.config.PresetQueryProperties;
 import com.hr.ai.config.TextToSqlProperties;
 import com.hr.ai.dto.NamedEmployeeQuery;
-import com.hr.ai.model.entity.User;
 import com.hr.ai.model.enums.EmployeeQueryTopic;
 import com.hr.ai.model.enums.HrQueryIntent;
 import com.hr.ai.model.enums.UserRole;
@@ -32,18 +31,11 @@ class HrQuestionAnalyzerTest {
     }
 
     private HrQuestionAnalyzer analyzer() {
-        return new HrQuestionAnalyzer(textToSqlProperties, presetQueryProperties);
+        return HrQuestionAnalyzerTestSupport.createRuleBasedAnalyzer(textToSqlProperties, presetQueryProperties);
     }
 
     private static UserPrincipal user(UserRole role, String employeeId, String deptId) {
-        User user = new User();
-        user.setId(1L);
-        user.setUsername("test");
-        user.setPassword("pwd");
-        user.setRole(role);
-        user.setEmployeeId(employeeId);
-        user.setDepartmentId(deptId);
-        return new UserPrincipal(user);
+        return HrQuestionAnalyzerTestSupport.user(role, employeeId, deptId);
     }
 
     @Nested
@@ -85,10 +77,24 @@ class HrQuestionAnalyzerTest {
         }
 
         @Test
-        void employeeQueryOthers_fallsBackToKnowledge() {
+        void employeeQueryOthers_routesToNamedEmployeeForGuard() {
             HrQuestionAnalyzer analyzer = analyzer();
             UserPrincipal employee = user(UserRole.EMPLOYEE, "E001", "D001");
-            assertEquals(HrQueryIntent.KNOWLEDGE, analyzer.analyze("张三的加班时长", employee));
+            assertEquals(HrQueryIntent.NAMED_EMPLOYEE, analyzer.analyze("张三的加班时长", employee));
+        }
+
+        @Test
+        void employeeQueryOthersDepartment_routesToNamedEmployee() {
+            HrQuestionAnalyzer analyzer = analyzer();
+            UserPrincipal employee = user(UserRole.EMPLOYEE, "E001", "D001");
+            assertEquals(HrQueryIntent.NAMED_EMPLOYEE, analyzer.analyze("赵六的部门是哪个", employee));
+        }
+
+        @Test
+        void managerQueryEmployeeDepartment_routesToTextToSql() {
+            HrQuestionAnalyzer analyzer = analyzer();
+            UserPrincipal manager = user(UserRole.MANAGER, "M001", "D001");
+            assertEquals(HrQueryIntent.TEXT_TO_SQL, analyzer.analyze("赵六的部门是哪个", manager));
         }
 
         @Test
@@ -248,11 +254,12 @@ class HrQuestionAnalyzerTest {
         @Test
         void extractNamedEmployeeQuery_infersTopic() {
             HrQuestionAnalyzer analyzer = analyzer();
-            NamedEmployeeQuery salary = analyzer.extractNamedEmployeeQuery("张三的工资").orElseThrow();
+            UserPrincipal manager = user(UserRole.MANAGER, "M001", "D001");
+            NamedEmployeeQuery salary = analyzer.extractNamedEmployeeQuery("张三的工资", manager).orElseThrow();
             assertEquals("张三", salary.getEmployeeName());
             assertEquals(EmployeeQueryTopic.SALARY, salary.getTopic());
 
-            NamedEmployeeQuery overtime = analyzer.extractNamedEmployeeQuery("赵六的加班时长").orElseThrow();
+            NamedEmployeeQuery overtime = analyzer.extractNamedEmployeeQuery("赵六的加班时长", manager).orElseThrow();
             assertEquals("赵六", overtime.getEmployeeName());
             assertEquals(EmployeeQueryTopic.OVERTIME, overtime.getTopic());
         }
@@ -260,7 +267,8 @@ class HrQuestionAnalyzerTest {
         @Test
         void extractLeaveTopic_fromDirectPattern() {
             HrQuestionAnalyzer analyzer = analyzer();
-            NamedEmployeeQuery leave = analyzer.extractNamedEmployeeQuery("张三假期").orElseThrow();
+            UserPrincipal manager = user(UserRole.MANAGER, "M001", "D001");
+            NamedEmployeeQuery leave = analyzer.extractNamedEmployeeQuery("张三假期", manager).orElseThrow();
             assertEquals("张三", leave.getEmployeeName());
             assertEquals(EmployeeQueryTopic.LEAVE, leave.getTopic());
         }
@@ -276,11 +284,14 @@ class HrQuestionAnalyzerTest {
         @CsvSource({
                 "赵六的满意度, SATISFACTION",
                 "张三的考勤记录, ATTENDANCE",
-                "钱七的档案, PROFILE"
+                "钱七的档案, PROFILE",
+                "赵六的部门是哪个, PROFILE",
+                "张三在哪个部门, PROFILE"
         })
         void extractNamedEmployeeQuery_allTopics(String question, EmployeeQueryTopic topic) {
             HrQuestionAnalyzer analyzer = analyzer();
-            NamedEmployeeQuery query = analyzer.extractNamedEmployeeQuery(question).orElseThrow();
+            UserPrincipal manager = user(UserRole.MANAGER, "M001", "D001");
+            NamedEmployeeQuery query = analyzer.extractNamedEmployeeQuery(question, manager).orElseThrow();
             assertEquals(topic, query.getTopic());
         }
     }

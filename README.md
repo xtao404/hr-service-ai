@@ -29,7 +29,8 @@ hr_ai/
 │   ├── src/main/java/com/hr/ai/
 │   │   ├── controller/         # REST API（Auth / Chat / Analytics / Knowledge）
 │   │   ├── service/            # 业务逻辑（RAG、LLM、预测、HR 查询）
-│   │   │   ├── HrQuestionAnalyzer.java   # 意图识别与路由
+│   │   │   ├── HrQuestionAnalyzer.java   # 意图路由编排（LLM + 规则兜底）
+│   │   │   ├── intent/         # LlmIntentAnalyzer / RuleBasedIntentAnalyzer
 │   │   │   ├── HrDataQueryService.java   # 预设查询执行
 │   │   │   └── texttosql/      # Text-to-SQL（Prompt / 安全 / 执行）
 │   │   ├── security/           # JWT 认证 + 角色权限
@@ -129,7 +130,37 @@ npm run dev
 
 ## 智能问答：意图路由
 
-用户提问后，由 `HrQuestionAnalyzer` 按**优先级**自动路由：
+用户提问后，由 `HrQuestionAnalyzer` 作为**前置路由器**选择数据通路。默认通过**大模型**识别意图与槽位（员工姓名、查询主题），未配置 API Key 或识别失败时自动回退到规则引擎。
+
+```
+用户提问
+  → LlmIntentAnalyzer（大模型 JSON 意图识别）
+  → 失败/Mock 时 RuleBasedIntentAnalyzer（规则兜底）
+  → applyRoutingPolicy（preset / text-to-sql 开关、复杂分析 gate）
+  ├─ KNOWLEDGE        → 知识库 RAG
+  ├─ PRESET_QUERY     → 固定 Repository 查询（preset 启用时）
+  └─ TEXT_TO_SQL      → LLM 生成 SQL
+```
+
+### 意图路由器配置
+
+```yaml
+hr:
+  ai:
+    intent-router:
+      mode: llm              # llm（默认）| rule（仅规则，测试/降级）
+      fallback-to-rule: true # LLM 失败时回退规则引擎
+      temperature: 0.1
+```
+
+| mode | 行为 |
+|------|------|
+| `llm` | 调用 Qwen 输出 JSON：`intent` / `employeeName` / `employeeTopic` |
+| `rule` | 仅用关键词+正则规则（单元测试、无 API Key 时的 Mock 模式） |
+
+### 原规则路由（兜底逻辑）
+
+当 `mode=rule` 或 LLM 不可用时，仍按**优先级**路由：
 
 ```
 用户提问

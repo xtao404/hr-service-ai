@@ -153,7 +153,7 @@ public class TextToSqlService {
 
     private String generateMockSql(String question, UserPrincipal user) {
         String q = question.toLowerCase(Locale.ROOT);
-        var namedQuery = questionAnalyzer.extractNamedEmployeeQuery(question);
+        var namedQuery = questionAnalyzer.extractNamedEmployeeQuery(question, user);
         if (namedQuery.isPresent() && user.getRole() != UserRole.EMPLOYEE) {
             return buildNamedEmployeeMockSql(namedQuery.get(), user);
         }

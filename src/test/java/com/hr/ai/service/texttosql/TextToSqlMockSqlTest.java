@@ -8,6 +8,7 @@ import com.hr.ai.model.enums.UserRole;
 import com.hr.ai.security.PermissionService;
 import com.hr.ai.security.UserPrincipal;
 import com.hr.ai.service.HrQuestionAnalyzer;
+import com.hr.ai.service.HrQuestionAnalyzerTestSupport;
 import com.hr.ai.service.QwenChatClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,7 +45,7 @@ class TextToSqlMockSqlTest {
         textToSqlProperties.setEnabled(true);
         LlmProperties llmProperties = new LlmProperties();
         llmProperties.setProvider("mock");
-        questionAnalyzer = new HrQuestionAnalyzer(textToSqlProperties, new PresetQueryProperties());
+        questionAnalyzer = HrQuestionAnalyzerTestSupport.createRuleBasedAnalyzer(textToSqlProperties, new PresetQueryProperties());
 
         textToSqlService = new TextToSqlService(
                 textToSqlProperties,
@@ -78,6 +79,14 @@ class TextToSqlMockSqlTest {
         String sql = invokeGenerateMockSql("赵六的加班时长", user(UserRole.MANAGER, "M001", "D001"));
         assertTrue(sql.contains("赵六"));
         assertTrue(sql.contains("overtime_hours"));
+    }
+
+    @Test
+    void mockSql_namedEmployeeDepartment_filtersByNameAndDept() throws Exception {
+        String sql = invokeGenerateMockSql("赵六的部门是哪个", user(UserRole.MANAGER, "M001", "D001"));
+        assertTrue(sql.contains("赵六"));
+        assertTrue(sql.contains("dept_name"));
+        assertTrue(sql.contains("D001"));
     }
 
     @Test
