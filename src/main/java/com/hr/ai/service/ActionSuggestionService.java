@@ -52,7 +52,7 @@ public class ActionSuggestionService {
             if (name == null) {
                 continue;
             }
-            Double riskScore = numberVal(row, "离职风险分", "risk_score", "风险分");
+            Double riskScore = normalizeRiskScore(numberVal(row, "离职风险分", "risk_score", "风险分"));
             if (riskScore != null && riskScore < 60) {
                 continue;
             }
@@ -90,6 +90,14 @@ public class ActionSuggestionService {
             }
         }
         return null;
+    }
+
+    /** 统一为 0-100 分制：Text-to-SQL 原始值为 0-1，预设查询已 ×100。 */
+    private Double normalizeRiskScore(Double score) {
+        if (score == null) {
+            return null;
+        }
+        return score <= 1 ? score * 100 : score;
     }
 
     private Double numberVal(Map<String, Object> row, String... keys) {

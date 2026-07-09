@@ -43,6 +43,10 @@ public class HrIntegrationService {
         HrDataContext dataContext = hrDataQueryService.query(query, user);
         List<ReportMetric> metrics = parseMetricsFromData(dataContext.getDataText(), query);
 
+        if (!permissionService.canViewSalary()) {
+            metrics.removeIf(m -> m.getName() != null && m.getName().contains("薪酬"));
+        }
+
         if (metrics.isEmpty()) {
             metrics = buildFallbackMetrics(query);
         }

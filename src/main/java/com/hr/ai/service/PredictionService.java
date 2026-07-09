@@ -64,12 +64,12 @@ public class PredictionService {
     }
 
     public List<SkillGapResponse> getSkillGaps(String departmentId) {
-        List<SkillGapPrediction> gaps = departmentId != null
-                ? skillGapRepository.findByDepartmentIdOrderByPriorityDesc(departmentId)
-                : skillGapRepository.findAllByOrderByPriorityDesc();
         if (departmentId != null) {
             permissionService.checkDepartmentAccess(departmentId);
         }
+        List<SkillGapPrediction> gaps = departmentId != null
+                ? skillGapRepository.findByDepartmentIdOrderByPriorityDesc(departmentId)
+                : skillGapRepository.findAllByOrderByPriorityDesc();
         return filterSkillGapsByPermission(gaps).stream()
                 .map(this::toSkillGapResponse).collect(Collectors.toList());
     }

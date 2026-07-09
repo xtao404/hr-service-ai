@@ -31,6 +31,10 @@ public class PermissionService {
     }
 
     public void checkEmployeeAccess(String targetEmployeeId) {
+        checkEmployeeAccess(targetEmployeeId, null);
+    }
+
+    public void checkEmployeeAccess(String targetEmployeeId, String targetDepartmentId) {
         UserPrincipal user = currentUser();
         if (user.getRole() == UserRole.HR_ADMIN || user.getRole() == UserRole.HRBP) {
             return;
@@ -39,7 +43,12 @@ public class PermissionService {
             return;
         }
         if (user.getRole() == UserRole.MANAGER) {
-            return;
+            if (targetDepartmentId != null
+                    && user.getDepartmentId() != null
+                    && user.getDepartmentId().equals(targetDepartmentId)) {
+                return;
+            }
+            throw new AccessDeniedException("无权访问该员工数据");
         }
         throw new AccessDeniedException("无权访问该员工数据");
     }

@@ -242,9 +242,9 @@ public class HrDataQueryService {
     }
 
     public EmployeeProfileResponse getEmployeeProfile(String employeeId) {
-        permissionService.checkEmployeeAccess(employeeId);
         BizEmployee emp = employeeRepository.findByEmployeeId(employeeId)
                 .orElseThrow(() -> new RuntimeException("未找到员工数据: " + employeeId));
+        permissionService.checkEmployeeAccess(employeeId, emp.getDeptId());
         return buildEmployeeProfile(emp);
     }
 
@@ -254,7 +254,7 @@ public class HrDataQueryService {
             throw new RuntimeException("未找到员工: " + name);
         }
         BizEmployee emp = employees.get(0);
-        permissionService.checkEmployeeAccess(emp.getEmployeeId());
+        permissionService.checkEmployeeAccess(emp.getEmployeeId(), emp.getDeptId());
         return buildEmployeeProfile(emp);
     }
 
@@ -279,13 +279,10 @@ public class HrDataQueryService {
                     profile.setAbsentDays(att.getAbsentDays());
                 });
 
-        if (permissionService.canViewSalary()
-                || permissionService.currentUser().getEmployeeId().equals(employeeId)) {
+        if (permissionService.canViewSalary()) {
             salaryRepository.findByEmployeeId(employeeId).ifPresent(sal -> {
                 profile.setSalaryBand(sal.getSalaryBand());
-                if (permissionService.canViewSalary()) {
-                    profile.setBaseSalary(sal.getBaseSalary());
-                }
+                profile.setBaseSalary(sal.getBaseSalary());
             });
         }
 
@@ -477,7 +474,9 @@ public class HrDataQueryService {
         sj.add("统计季度: " + quarter);
         sj.add("在职总人数: " + employeeRepository.countByStatus("ACTIVE"));
         sj.add("高风险离职预警: " + turnoverRiskRepository.countByRiskLevelIn(List.of("HIGH", "CRITICAL")) + " 人");
-        sj.add("全公司薪酬均值: " + String.format("%.0f", salaryRepository.avgBaseSalary()) + " 元/月");
+        if (permissionService.canViewSalary()) {
+            sj.add("全公司薪酬均值: " + String.format("%.0f", salaryRepository.avgBaseSalary()) + " 元/月");
+        }
 
         sj.add("\n各部门概况:");
         departmentRepository.findAll().forEach(dept -> {
