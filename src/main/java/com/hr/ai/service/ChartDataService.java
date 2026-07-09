@@ -22,10 +22,13 @@ public class ChartDataService {
             "hours", "hour", "时长", "count", "次数", "人数", "score", "分数",
             "salary", "薪酬", "月薪", "risk", "风险", "balance", "余额", "days", "天数",
             "overtime", "加班", "late", "迟到", "absent", "缺勤", "avg", "平均", "total", "总",
-            "headcount", "satisfaction", "满意度", "数值", "value", "amount", "rate"
+            "headcount", "satisfaction", "满意度", "数值", "value", "amount", "rate", "招聘"
     );
 
-    private static final Set<String> PIE_HINTS = Set.of("人数", "headcount", "在职", "占比", "比例", "count");
+    /** 仅当指标本身表示占比/构成时使用饼图 */
+    private static final Set<String> PIE_HINTS = Set.of("占比", "比例", "percent", "percentage");
+
+    private static final Set<String> RECRUITMENT_HINTS = Set.of("招聘", "增编", "补员", "人力缺口", "headcount");
 
     private final ColumnLabelMapper columnLabelMapper;
 
@@ -44,7 +47,9 @@ public class ChartDataService {
 
         if (labelCol != null && !numericCols.isEmpty()) {
             if (normalized.size() == 1 && numericCols.size() >= 2) {
-                return List.of(buildSingleRowMetricsChart(titleHint, normalized.get(0), numericCols));
+                ChartConfig chart = buildSingleRowMetricsChart(titleHint, normalized.get(0), numericCols);
+                enrichChartMeta(chart, titleHint, numericCols);
+                return List.of(chart);
             }
             ChartConfig chart = buildMultiRowChart(titleHint, normalized, labelCol, numericCols);
             return chart != null ? List.of(chart) : List.of();
@@ -52,6 +57,9 @@ public class ChartDataService {
 
         if (normalized.size() == 1) {
             ChartConfig chart = buildSingleRowAllNumericChart(titleHint, normalized.get(0));
+            if (chart != null) {
+                enrichChartMeta(chart, titleHint, List.of());
+            }
             return chart != null ? List.of(chart) : List.of();
         }
 
@@ -82,12 +90,17 @@ public class ChartDataService {
 
     private ChartConfig buildMultiRowChart(String titleHint, List<Map<String, Object>> rows,
                                            String labelCol, List<String> numericCols) {
+        List<String> chartMetrics = filterChartMetrics(titleHint, numericCols);
+        if (chartMetrics.isEmpty()) {
+            return null;
+        }
+
         List<String> labels = rows.stream()
                 .map(r -> formatLabel(r.get(labelCol)))
                 .collect(Collectors.toList());
 
         List<ChartSeries> seriesList = new ArrayList<>();
-        for (String numCol : numericCols) {
+        for (String numCol : chartMetrics) {
             ChartSeries series = new ChartSeries();
             series.setName(numCol);
             series.setData(rows.stream()
@@ -96,15 +109,30 @@ public class ChartDataService {
             seriesList.add(series);
         }
 
-        String title = resolveTitle(titleHint, numericCols.get(0));
-        String type = resolveChartType(numericCols.get(0), rows.size(), seriesList.get(0).getData());
+        String primaryMetric = chartMetrics.get(0);
+        String title = resolveTitle(titleHint, primaryMetric, chartMetrics);
+        String type = resolveChartType(titleHint, primaryMetric, chartMetrics, rows.size(),
+                seriesList.get(0).getData());
 
         ChartConfig config = new ChartConfig();
         config.setType(type);
         config.setTitle(title);
         config.setLabels(labels);
         config.setSeries(seriesList);
+        enrichChartMeta(config, titleHint, chartMetrics);
         return config;
+    }
+
+    /** 招聘评估图表仅展示人数类指标，避免与加班时长混用同一 Y 轴 */
+    private List<String> filterChartMetrics(String titleHint, List<String> numericCols) {
+        if (!isRecruitmentContext(titleHint, numericCols)) {
+            return numericCols;
+        }
+        List<String> peopleMetrics = numericCols.stream()
+                .filter(col -> col.contains("人数") || col.contains("招聘")
+                        || col.contains("headcount") || col.contains("编制"))
+                .collect(Collectors.toCollection(ArrayList::new));
+        return peopleMetrics.isEmpty() ? numericCols : peopleMetrics;
     }
 
     private ChartConfig buildSingleRowMetricsChart(String titleHint, Map<String, Object> row,
@@ -122,7 +150,7 @@ public class ChartDataService {
 
         ChartConfig config = new ChartConfig();
         config.setType("bar");
-        config.setTitle(resolveTitle(titleHint, "数据概览"));
+        config.setTitle(resolveTitle(titleHint, "数据概览", numericCols));
         config.setLabels(labels);
         config.setSeries(List.of(series));
         return config;
@@ -147,10 +175,47 @@ public class ChartDataService {
 
         ChartConfig config = new ChartConfig();
         config.setType("bar");
-        config.setTitle(resolveTitle(titleHint, "数据概览"));
+        config.setTitle(resolveTitle(titleHint, "数据概览", labels));
         config.setLabels(labels);
         config.setSeries(List.of(series));
         return config;
+    }
+
+    private void enrichChartMeta(ChartConfig config, String titleHint, List<String> numericCols) {
+        if (config == null) {
+            return;
+        }
+        String primaryMetric = numericCols.isEmpty()
+                ? (config.getSeries().isEmpty() ? "" : config.getSeries().get(0).getName())
+                : numericCols.get(0);
+
+        if (isRecruitmentContext(titleHint, numericCols)) {
+            config.setTitle("各部门招聘需求评估");
+            config.setType("bar");
+            config.setValueUnit("人");
+            config.setSubtitle("柱状图对比各部门在职人数与建议补充人数；数值单位：人");
+            return;
+        }
+
+        if ("pie".equals(config.getType())) {
+            config.setValueUnit(inferUnit(primaryMetric));
+            config.setSubtitle("扇区占比 = 该部门「" + primaryMetric + "」占全部部门合计的百分比");
+            return;
+        }
+
+        config.setValueUnit(inferUnit(primaryMetric));
+        if (numericCols.size() > 1) {
+            config.setSubtitle("并列对比「" + String.join("」「", numericCols) + "」；单位：" + config.getValueUnit());
+        } else if (primaryMetric != null && !primaryMetric.isBlank()) {
+            config.setSubtitle("展示各部门「" + primaryMetric + "」对比；单位：" + config.getValueUnit());
+        }
+    }
+
+    private boolean isRecruitmentContext(String titleHint, List<String> numericCols) {
+        if (titleHint != null && matchesAny(titleHint, RECRUITMENT_HINTS)) {
+            return true;
+        }
+        return numericCols.stream().anyMatch(col -> matchesAny(col, RECRUITMENT_HINTS));
     }
 
     private String findLabelColumn(List<Map<String, Object>> rows) {
@@ -186,10 +251,39 @@ public class ChartDataService {
                 }
             }
         }
-        return numericCols;
+        return prioritizeRecruitmentColumns(numericCols);
     }
 
-    private String resolveChartType(String metricCol, int rowCount, List<Double> values) {
+    /** 招聘场景下优先展示「在职人数 + 建议招聘人数」，避免饼图误用第一列 */
+    private List<String> prioritizeRecruitmentColumns(List<String> numericCols) {
+        boolean hasRecruitment = numericCols.stream().anyMatch(col -> matchesAny(col, RECRUITMENT_HINTS));
+        if (!hasRecruitment) {
+            return numericCols;
+        }
+        List<String> ordered = new ArrayList<>();
+        for (String col : numericCols) {
+            if (col.contains("在职") || col.contains("headcount")) {
+                ordered.add(col);
+            }
+        }
+        for (String col : numericCols) {
+            if (matchesAny(col, RECRUITMENT_HINTS) && !ordered.contains(col)) {
+                ordered.add(col);
+            }
+        }
+        for (String col : numericCols) {
+            if (!ordered.contains(col)) {
+                ordered.add(col);
+            }
+        }
+        return ordered;
+    }
+
+    private String resolveChartType(String titleHint, String metricCol, List<String> numericCols,
+                                  int rowCount, List<Double> values) {
+        if (numericCols.size() > 1 || isRecruitmentContext(titleHint, numericCols)) {
+            return "bar";
+        }
         if (rowCount >= 2 && rowCount <= 8 && matchesHint(metricCol, PIE_HINTS)) {
             double sum = values.stream().mapToDouble(Double::doubleValue).sum();
             if (sum > 0 && values.stream().allMatch(v -> v >= 0)) {
@@ -202,16 +296,45 @@ public class ChartDataService {
         return "bar";
     }
 
-    private String resolveTitle(String titleHint, String fallback) {
+    private String resolveTitle(String titleHint, String fallback, List<String> numericCols) {
+        if (isRecruitmentContext(titleHint, numericCols)) {
+            return "各部门招聘需求评估";
+        }
         if (titleHint != null && !titleHint.isBlank()) {
             return titleHint;
         }
         return fallback + "统计";
     }
 
+    private String inferUnit(String metricCol) {
+        if (metricCol == null) {
+            return "";
+        }
+        if (metricCol.contains("人数") || metricCol.contains("招聘") || metricCol.contains("headcount")) {
+            return "人";
+        }
+        if (metricCol.contains("加班") || metricCol.contains("时长") || metricCol.contains("hour")) {
+            return "小时";
+        }
+        if (metricCol.contains("薪酬") || metricCol.contains("月薪") || metricCol.contains("salary")) {
+            return "元";
+        }
+        if (metricCol.contains("分") || metricCol.contains("score")) {
+            return "分";
+        }
+        if (metricCol.contains("天")) {
+            return "天";
+        }
+        return "";
+    }
+
     private boolean matchesHint(String col, Set<String> hints) {
         String lower = col.toLowerCase(Locale.ROOT);
         return hints.stream().anyMatch(h -> lower.contains(h.toLowerCase(Locale.ROOT)));
+    }
+
+    private boolean matchesAny(String text, Set<String> hints) {
+        return matchesHint(text, hints);
     }
 
     private boolean isNumericValue(Object value) {

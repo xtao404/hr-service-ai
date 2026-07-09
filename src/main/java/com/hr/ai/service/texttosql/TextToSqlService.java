@@ -192,6 +192,20 @@ public class TextToSqlService {
                     + "WHERE r.risk_level IN ('HIGH','CRITICAL')" + deptFilter
                     + " ORDER BY r.risk_score DESC LIMIT 20";
         }
+        if (q.contains("招聘") || q.contains("增编") || q.contains("补员")
+                || (q.contains("加班") && q.contains("部门") && q.contains("分析"))) {
+            return "SELECT d.dept_name AS 部门名称, COUNT(e.id) AS 在职人数, "
+                    + "ROUND(COALESCE(SUM(a.overtime_hours), 0), 1) AS 总加班时长, "
+                    + "CASE WHEN d.dept_id = 'D000' THEN 0 "
+                    + "ELSE GREATEST(0, LEAST(10, ROUND(COALESCE(SUM(a.overtime_hours), 0) "
+                    + "/ NULLIF(COUNT(e.id), 0) / 8))) END AS 建议招聘人数 "
+                    + "FROM biz_department d "
+                    + "LEFT JOIN biz_employee e ON d.dept_id = e.dept_id AND e.status = 'ACTIVE' "
+                    + "LEFT JOIN biz_attendance a ON e.employee_id = a.employee_id AND a.quarter = '2026-Q1' "
+                    + "WHERE d.dept_id != 'D000'" + deptFilter.replace("e.dept_id", "d.dept_id")
+                    + " GROUP BY d.dept_id, d.dept_name "
+                    + "ORDER BY 建议招聘人数 DESC, 总加班时长 DESC LIMIT 10";
+        }
         if (q.contains("人数") || q.contains("headcount") || q.contains("编制") || q.contains("在职")) {
             return "SELECT d.dept_name AS 部门名称, COUNT(e.id) AS 在职人数 "
                     + "FROM biz_department d "
@@ -333,6 +347,9 @@ public class TextToSqlService {
         }
         if (q.contains("满意度")) {
             return "员工满意度分布";
+        }
+        if (q.contains("招聘") || q.contains("增编") || q.contains("补员")) {
+            return "各部门招聘需求评估";
         }
         if (q.contains("人数") || q.contains("编制")) {
             return "各部门在职人数";

@@ -45,7 +45,10 @@ public class ColumnLabelMapper {
             Map.entry("total_overtime", "总加班时长"),
             Map.entry("avg_overtime", "平均加班时长"),
             Map.entry("avg_salary", "平均月薪"),
-            Map.entry("employee_count", "员工数")
+            Map.entry("employee_count", "员工数"),
+            Map.entry("suggested_hires", "建议招聘人数"),
+            Map.entry("recruitment_need", "建议招聘人数"),
+            Map.entry("hire_count", "建议招聘人数")
     );
 
     public String toLabel(String columnName) {
