@@ -28,7 +28,7 @@ public class SqlPromptBuilder {
             4. 使用 MySQL 语法，表名/字段名与 Schema 完全一致
             5. 涉及员工姓名时 JOIN biz_employee 获取 name 字段
             6. 当前考勤汇总季度默认为 %s（用户未指定时使用）
-            7. 聚合查询使用 GROUP BY，指标列使用中文别名（AS 部门名称、总加班时长 等）
+            7. 聚合查询使用 GROUP BY，指标列使用中文别名（AS 部门名称、总加班时长 等）；别名含连字符或以数字开头时须用反引号，如 AS `2026-Q1加班时长`、AS `2026年绩效评级`
             8. 多表关联优先：biz_employee e → 其他表 ON e.employee_id
             9. 过滤在职员工时使用 e.status = 'ACTIVE'
             10. 风险等级枚举：LOW / MEDIUM / HIGH / CRITICAL；绩效评级：A/B/C/D

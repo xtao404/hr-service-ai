@@ -35,9 +35,11 @@ public class SqlSecurityValidator {
 
     private final TextToSqlProperties properties;
     private final SqlExtractor sqlExtractor;
+    private final SqlAliasQuoter sqlAliasQuoter;
 
     public String validateAndSanitize(String rawSql, UserPrincipal user, boolean canViewSalary) {
         String sql = sqlExtractor.extract(rawSql);
+        sql = sqlAliasQuoter.quoteUnsafeAliases(sql);
         String upper = sql.toUpperCase(Locale.ROOT);
 
         if (!upper.startsWith("SELECT")) {
