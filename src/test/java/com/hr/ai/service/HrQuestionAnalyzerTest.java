@@ -14,6 +14,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -278,6 +280,23 @@ class HrQuestionAnalyzerTest {
             HrQuestionAnalyzer analyzer = analyzer();
             assertTrue(analyzer.extractNamedEmployeeQuery("统计部门加班情况").isEmpty());
             assertTrue(analyzer.extractNamedEmployeeQuery("对比各部门绩效").isEmpty());
+        }
+
+        @Test
+        void extractMultiEmployeeQuery_profile() {
+            HrQuestionAnalyzer analyzer = analyzer();
+            UserPrincipal manager = user(UserRole.MANAGER, "M001", "D001");
+            NamedEmployeeQuery query = analyzer.extractNamedEmployeeQuery("赵六和赵六一画像", manager).orElseThrow();
+            assertTrue(query.isMultiEmployee());
+            assertEquals(List.of("赵六", "赵六一"), query.resolvedNames());
+            assertEquals(EmployeeQueryTopic.PROFILE, query.getTopic());
+        }
+
+        @Test
+        void multiEmployeeProfile_routesToNamedEmployee_notTextToSql() {
+            HrQuestionAnalyzer analyzer = analyzer();
+            UserPrincipal manager = user(UserRole.MANAGER, "M001", "D001");
+            assertEquals(HrQueryIntent.NAMED_EMPLOYEE, analyzer.analyze("赵六和赵六一画像", manager));
         }
 
         @ParameterizedTest

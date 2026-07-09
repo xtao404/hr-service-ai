@@ -14,6 +14,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -52,6 +53,7 @@ public class LlmIntentAnalyzer {
             return IntentClassification.builder()
                     .intent(intent)
                     .employeeName(normalize(payload.getEmployeeName()))
+                    .employeeNames(payload.getEmployeeNames())
                     .employeeTopic(topic)
                     .build();
         } catch (Exception e) {
@@ -110,6 +112,7 @@ public class LlmIntentAnalyzer {
     static class LlmIntentPayload {
         private String intent;
         private String employeeName;
+        private List<String> employeeNames;
         private String employeeTopic;
     }
 }

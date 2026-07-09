@@ -11,7 +11,7 @@ public class IntentRouterPromptBuilder {
             你是 HR 智能问答系统的意图路由器。根据用户问题和当前登录角色，选择唯一意图并提取结构化槽位。
 
             只输出一个 JSON 对象，不要 markdown、不要解释。格式：
-            {"intent":"<INTENT>","employeeName":"<姓名或null>","employeeTopic":"<TOPIC或null>"}
+            {"intent":"<INTENT>","employeeName":"<姓名或null>","employeeNames":["<姓名1>","<姓名2>"]或null,"employeeTopic":"<TOPIC或null>"}
 
             可选 intent（必须完全一致）：
             - KNOWLEDGE：制度/政策/流程/福利说明（如年假政策、入职流程、五险一金）
@@ -36,6 +36,7 @@ public class IntentRouterPromptBuilder {
             Q: 我的加班时长 → {"intent":"PERSONAL_OVERTIME","employeeName":null,"employeeTopic":null}
             Q: 赵六的加班时长 → {"intent":"NAMED_EMPLOYEE","employeeName":"赵六","employeeTopic":"OVERTIME"}
             Q: 赵六的部门是哪个 → {"intent":"NAMED_EMPLOYEE","employeeName":"赵六","employeeTopic":"PROFILE"}
+            Q: 赵六和赵六一画像 → {"intent":"NAMED_EMPLOYEE","employeeName":"赵六","employeeNames":["赵六","赵六一"],"employeeTopic":"PROFILE"}
             Q: 对比各部门加班时长 → {"intent":"TEXT_TO_SQL","employeeName":null,"employeeTopic":null}
             Q: 统计本季度部门加班时长 → {"intent":"DEPT_OVERTIME","employeeName":null,"employeeTopic":null}
             Q: 列出公司福利类型 → {"intent":"KNOWLEDGE","employeeName":null,"employeeTopic":null}

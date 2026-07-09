@@ -54,7 +54,12 @@ public class HrQuestionAnalyzer {
     }
 
     public Optional<NamedEmployeeQuery> extractNamedEmployeeQuery(String question, UserPrincipal user) {
-        return resolveAnalysis(question, user).toNamedEmployeeQuery();
+        Optional<NamedEmployeeQuery> ruleQuery = ruleBasedIntentAnalyzer.extractNamedEmployeeQuery(question);
+        if (ruleQuery.isPresent() && ruleQuery.get().isMultiEmployee()) {
+            return ruleQuery;
+        }
+        Optional<NamedEmployeeQuery> analyzed = resolveAnalysis(question, user).toNamedEmployeeQuery();
+        return analyzed.isPresent() ? analyzed : ruleQuery;
     }
 
     /** 无用户上下文时仅规则提取（Mock SQL 测试等场景） */
@@ -107,6 +112,7 @@ public class HrQuestionAnalyzer {
 
     private IntentClassification applyRoutingPolicy(IntentClassification raw, String question, UserPrincipal user) {
         String q = question.toLowerCase(Locale.ROOT);
+        raw = preferRuleNamedEmployee(raw, question);
         HrQueryIntent intent = raw.getIntent() != null ? raw.getIntent() : HrQueryIntent.KNOWLEDGE;
 
         if (intent == HrQueryIntent.KNOWLEDGE) {
@@ -147,6 +153,23 @@ public class HrQuestionAnalyzer {
         return copyWithIntent(raw, HrQueryIntent.KNOWLEDGE);
     }
 
+    /**
+     * 规则引擎能识别指定员工（含「赵六和赵六一」多人）时，优先 NAMED_EMPLOYEE，
+     * 避免 LLM 误判为 TEXT_TO_SQL 后只查第一个人。
+     */
+    private IntentClassification preferRuleNamedEmployee(IntentClassification raw, String question) {
+        return ruleBasedIntentAnalyzer.extractNamedEmployeeQuery(question)
+                .filter(NamedEmployeeQuery::isMultiEmployee)
+                .map(named -> IntentClassification.builder()
+                        .intent(HrQueryIntent.NAMED_EMPLOYEE)
+                        .employeeName(named.getEmployeeName())
+                        .employeeNames(named.resolvedNames())
+                        .employeeTopic(named.getTopic())
+                        .source(raw.getSource())
+                        .build())
+                .orElse(raw);
+    }
+
     private IntentClassification ensureNamedEmployee(IntentClassification raw) {
         if (raw.getIntent() == HrQueryIntent.NAMED_EMPLOYEE) {
             return raw;
@@ -154,6 +177,7 @@ public class HrQuestionAnalyzer {
         return IntentClassification.builder()
                 .intent(HrQueryIntent.NAMED_EMPLOYEE)
                 .employeeName(raw.getEmployeeName())
+                .employeeNames(raw.getEmployeeNames())
                 .employeeTopic(raw.getEmployeeTopic())
                 .source(raw.getSource())
                 .build();
@@ -163,6 +187,7 @@ public class HrQuestionAnalyzer {
         return IntentClassification.builder()
                 .intent(intent)
                 .employeeName(raw.getEmployeeName())
+                .employeeNames(raw.getEmployeeNames())
                 .employeeTopic(raw.getEmployeeTopic())
                 .source(raw.getSource())
                 .build();

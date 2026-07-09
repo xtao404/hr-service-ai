@@ -33,6 +33,8 @@ public class SqlPromptBuilder {
             9. 过滤在职员工时使用 e.status = 'ACTIVE'
             10. 风险等级枚举：LOW / MEDIUM / HIGH / CRITICAL；绩效评级：A/B/C/D
             11. 仅查询 Schema 中已列出的字段；福利/制度/流程类问题无对应表，不得虚构 benefit_type、description 等列
+            12. 统计/总数/多少/人数/平均/对比/排名类问题：必须在 SQL 中使用 COUNT/SUM/AVG/GROUP BY 在数据库内聚合，禁止 SELECT * 拉取大量明细后再由应用层统计
+            13. 仅查单个员工档案/指标时，WHERE 中限定 name 或 employee_id，并 LIMIT 10
             """;
 
     public String buildSystemPrompt(UserPrincipal user) {
@@ -48,7 +50,22 @@ public class SqlPromptBuilder {
     }
 
     public String buildUserPrompt(String question) {
-        return "请将以下 HR 数据问题转换为 SQL：\n" + question;
+        StringBuilder sb = new StringBuilder("请将以下 HR 数据问题转换为 SQL：\n");
+        sb.append(question);
+        if (isAggregateQuestion(question)) {
+            sb.append("\n\n【提示】该问题属于统计/聚合类，请使用 COUNT/SUM/AVG/GROUP BY 在数据库内完成计算，不要返回大量明细行。");
+        }
+        return sb.toString();
+    }
+
+    private boolean isAggregateQuestion(String question) {
+        if (question == null) {
+            return false;
+        }
+        String q = question.toLowerCase();
+        return q.contains("多少") || q.contains("几个") || q.contains("总数") || q.contains("统计")
+                || q.contains("平均") || q.contains("对比") || q.contains("排名") || q.contains("各部门")
+                || q.contains("汇总") || q.contains("合计") || q.contains("占比") || q.contains("分布");
     }
 
     public String buildCorrectionPrompt(String question, String failedSql, String errorMessage) {

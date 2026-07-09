@@ -7,6 +7,7 @@ import com.hr.ai.config.TextToSqlProperties;
 import com.hr.ai.model.entity.User;
 import com.hr.ai.model.enums.UserRole;
 import com.hr.ai.security.UserPrincipal;
+import com.hr.ai.service.intent.EmployeeNameExtractor;
 import com.hr.ai.service.intent.RuleBasedIntentAnalyzer;
 
 /**
@@ -25,7 +26,7 @@ final class HrQuestionAnalyzerTestSupport {
         llmProperties.setProvider("mock");
         return new HrQuestionAnalyzer(
                 null,
-                new RuleBasedIntentAnalyzer(),
+                new RuleBasedIntentAnalyzer(new EmployeeNameExtractor()),
                 intentRouterProperties,
                 llmProperties,
                 textToSqlProperties,

@@ -1,6 +1,8 @@
 package com.hr.ai.service;
 
+import com.hr.ai.config.AntiHallucinationProperties;
 import com.hr.ai.config.LlmProperties;
+import com.hr.ai.dto.HrDataContext;
 import com.hr.ai.dto.SourceReference;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +25,7 @@ public class LlmService {
             3. 使用简洁、专业、友好的中文回答
             4. 回答结构清晰，必要时使用分点说明
             5. 不要透露你不知道的信息，不要猜测
+            6. 不得引用参考资料中未出现的具体天数、金额、流程步骤
             """;
 
     private static final String REPORT_SYSTEM_PROMPT = """
@@ -45,20 +48,24 @@ public class LlmService {
             4. 涉及薪酬等敏感数据时，仅复述查询结果中的内容，不额外推测
             5. 回答末尾注明"以上数据来源于HR业务系统"
             6. 不要在回答中展示或提及 SQL 语句
+            7. 不得出现查询结果中不存在的姓名、部门、数值
             """;
 
     private final LlmProperties llmProperties;
+    private final AntiHallucinationProperties antiHallucinationProperties;
     private final QwenChatClient qwenChatClient;
+    private final VectorStoreService vectorStoreService;
+    private final StructuredDataAnswerFormatter structuredDataAnswerFormatter;
+    private final AnswerNumberValidator answerNumberValidator;
 
     public String generateAnswer(String question, List<VectorStoreService.ScoredDocument> contexts) {
+        if (contexts == null || contexts.isEmpty() || !vectorStoreService.isConfidentEnough(contexts)) {
+            return structuredDataAnswerFormatter.formatRagRefusal(question);
+        }
+
         if (llmProperties.isMockMode()) {
             logMockFallback();
             return buildMockAnswer(question, contexts);
-        }
-
-        if (contexts.isEmpty()) {
-            return callQwen(RAG_SYSTEM_PROMPT,
-                    "员工问题：" + question + "\n\n知识库参考资料：（未检索到相关文档）\n请告知用户知识库中暂无相关信息。");
         }
 
         String contextText = contexts.stream()
@@ -74,7 +81,7 @@ public class LlmService {
                 知识库参考资料：
                 %s
 
-                请根据以上资料回答员工的问题。
+                请根据以上资料回答员工的问题。若资料未涵盖问题要点，请明确说明无法从现有资料回答。
                 """, question, contextText);
 
         return callQwen(RAG_SYSTEM_PROMPT, userPrompt);
@@ -96,20 +103,30 @@ public class LlmService {
                 请生成一份简洁的分析报告，包含：核心发现、数据解读、行动建议。
                 """, query, dataContext);
 
-        return callQwen(REPORT_SYSTEM_PROMPT, userPrompt);
+        String answer = callQwen(REPORT_SYSTEM_PROMPT, userPrompt);
+        if (antiHallucinationProperties.isValidateAnswerNumbers()
+                && answerNumberValidator.hasUngroundedNumbers(answer, dataContext)) {
+            log.warn("报告答案含未 grounded 数字，回退为数据原文");
+            return "基于HR系统实时数据分析：\n" + dataContext + "\n\n以上数据来源于HR业务系统。";
+        }
+        return answer;
     }
 
-    public String generateDataAnswer(String question, String dataContext, String dataSource) {
-        if (dataContext == null || dataContext.isBlank()) {
+    public String generateDataAnswer(String question, HrDataContext context) {
+        if (context == null || context.getDataText() == null || context.getDataText().isBlank()) {
             return "未能从数据库中查询到相关数据，请确认已导入测试数据脚本 scripts/mysql/hr_test_data.sql。";
+        }
+
+        if (shouldUseStructuredTemplate(context)) {
+            return structuredDataAnswerFormatter.format(question, context);
         }
 
         if (llmProperties.isMockMode()) {
             logMockFallback();
-            return String.format("根据HR业务系统数据（%s），针对您的问题「%s」，查询结果如下：\n\n%s\n\n以上数据来源于HR业务系统。",
-                    dataSource, question, dataContext);
+            return structuredDataAnswerFormatter.format(question, context);
         }
 
+        String dataSource = context.getDataSource() != null ? context.getDataSource() : "HR业务数据库";
         String userPrompt = String.format("""
                 用户问题：%s
 
@@ -118,10 +135,38 @@ public class LlmService {
                 数据库查询结果：
                 %s
 
-                请根据以上真实数据回答用户的问题。
-                """, question, dataSource, dataContext);
+                请根据以上真实数据回答用户的问题。不得添加查询结果中不存在的任何数字或人员信息。
+                """, question, dataSource, context.getDataText());
 
-        return callQwen(DATA_SYSTEM_PROMPT, userPrompt);
+        String answer = callQwen(DATA_SYSTEM_PROMPT, userPrompt);
+        if (antiHallucinationProperties.isValidateAnswerNumbers()
+                && answerNumberValidator.hasUngroundedNumbers(answer, context.getDataText())) {
+            log.warn("数据答案含未 grounded 数字，回退模板直出 question='{}'", question);
+            return structuredDataAnswerFormatter.format(question, context);
+        }
+        return answer;
+    }
+
+    /** 兼容旧签名 */
+    public String generateDataAnswer(String question, String dataContext, String dataSource) {
+        HrDataContext context = new HrDataContext();
+        context.setDataText(dataContext);
+        context.setDataSource(dataSource);
+        return generateDataAnswer(question, context);
+    }
+
+    private boolean shouldUseStructuredTemplate(HrDataContext context) {
+        if ("guard".equals(context.getQueryMethod())) {
+            return antiHallucinationProperties.isSkipLlmForGuardResponses();
+        }
+        if (!antiHallucinationProperties.isSkipLlmForStructuredData()) {
+            return false;
+        }
+        Integer rowCount = context.getRowCount();
+        if (rowCount != null && rowCount > antiHallucinationProperties.getStructuredDataMaxRows()) {
+            return false;
+        }
+        return context.getDataText() != null && !context.getDataText().isBlank();
     }
 
     private String callQwen(String systemPrompt, String userPrompt) {
@@ -129,7 +174,7 @@ public class LlmService {
             return qwenChatClient.chat(systemPrompt, userPrompt);
         } catch (RuntimeException e) {
             log.warn("Qwen 调用失败，回退到 Mock 模式: {}", e.getMessage());
-            return "【大模型服务暂时不可用，以下为知识库原文参考】\n\n" + userPrompt;
+            return "【大模型服务暂时不可用，以下为参考内容】\n\n" + userPrompt;
         }
     }
 
@@ -142,16 +187,10 @@ public class LlmService {
     }
 
     private String buildMockAnswer(String question, List<VectorStoreService.ScoredDocument> contexts) {
-        if (contexts.isEmpty()) {
-            return "抱歉，我在知识库中没有找到与您问题相关的信息。建议您联系HR人工客服，或尝试换个方式描述您的问题。";
-        }
         VectorStoreService.ScoredDocument top = contexts.get(0);
-        String topTitle = top.document().getTitle();
         String relevantSnippet = extractRelevantSnippet(top.document().getContent(), question);
-        return String.format(
-                "根据公司制度文件《%s》及相关政策说明，针对您的问题「%s」，答复如下：\n\n%s\n\n"
-                        + "以上信息来源于公司内部知识库，如有疑问请联系HR部门确认。",
-                topTitle, question, relevantSnippet);
+        return structuredDataAnswerFormatter.formatRagFromSnippet(
+                question, top.document().getTitle(), relevantSnippet);
     }
 
     private String extractRelevantSnippet(String content, String question) {

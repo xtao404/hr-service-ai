@@ -1,10 +1,10 @@
 package com.hr.ai.service;
 
+import com.hr.ai.config.RagProperties;
 import com.hr.ai.model.entity.KnowledgeDocument;
 import com.hr.ai.model.enums.KnowledgeCategory;
 import com.hr.ai.repository.KnowledgeDocumentRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -18,12 +18,7 @@ import java.util.stream.Collectors;
 public class VectorStoreService {
 
     private final KnowledgeDocumentRepository documentRepository;
-
-    @Value("${hr.ai.rag.top-k:5}")
-    private int topK;
-
-    @Value("${hr.ai.rag.similarity-threshold:0.08}")
-    private double similarityThreshold;
+    private final RagProperties ragProperties;
 
     private static final List<String> HR_KEYWORDS = List.of(
             "年假", "假期", "请假", "病假", "事假", "调休", "余额",
@@ -73,27 +68,37 @@ public class VectorStoreService {
                 .collect(Collectors.toList());
 
         List<ScoredDocument> matched = scored.stream()
-                .filter(sd -> sd.similarity() >= similarityThreshold)
-                .limit(topK)
+                .filter(sd -> sd.similarity() >= ragProperties.getSimilarityThreshold())
+                .limit(ragProperties.getTopK())
                 .collect(Collectors.toList());
 
         if (!matched.isEmpty()) {
             return matched;
         }
 
-        // 关键词分类回退
-        List<ScoredDocument> categoryFallback = searchByCategory(query, allDocs);
-        if (!categoryFallback.isEmpty()) {
-            return categoryFallback;
+        if (ragProperties.isCategoryFallbackEnabled()) {
+            List<ScoredDocument> categoryFallback = searchByCategory(query, allDocs);
+            if (!categoryFallback.isEmpty()) {
+                return categoryFallback;
+            }
         }
 
-        // 最终回退：返回得分最高的文档
-        ScoredDocument best = scored.get(0);
-        if (best.similarity() > 0) {
-            return List.of(best);
+        if (ragProperties.isLowScoreFallbackEnabled()) {
+            ScoredDocument best = scored.get(0);
+            if (best.similarity() > 0) {
+                return List.of(best);
+            }
         }
 
         return List.of();
+    }
+
+    /** top-1 相似度是否达到可回答阈值 */
+    public boolean isConfidentEnough(List<ScoredDocument> contexts) {
+        if (contexts == null || contexts.isEmpty()) {
+            return false;
+        }
+        return contexts.get(0).similarity() >= ragProperties.getMinConfidenceForAnswer();
     }
 
     private List<ScoredDocument> searchByCategory(String query, List<KnowledgeDocument> allDocs) {
@@ -109,8 +114,8 @@ public class VectorStoreService {
 
         return allDocs.stream()
                 .filter(doc -> categories.contains(doc.getCategory()))
-                .map(doc -> new ScoredDocument(doc, 0.5))
-                .limit(topK)
+                .map(doc -> new ScoredDocument(doc, ragProperties.getMinConfidenceForAnswer()))
+                .limit(ragProperties.getTopK())
                 .collect(Collectors.toList());
     }
 

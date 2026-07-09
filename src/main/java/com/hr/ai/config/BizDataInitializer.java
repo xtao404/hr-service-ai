@@ -65,6 +65,7 @@ public class BizDataInitializer implements CommandLineRunner {
         saveEmp("E103", "周八", "男", "D001", "测试工程师", "2022-04-18", "本科", 7.8);
         saveEmp("E104", "吴九", "女", "D001", "DevOps工程师", "2019-11-05", "硕士", 8.5);
         saveEmp("E105", "郑十", "男", "D001", "初级Java工程师", "2023-08-01", "本科", 7.0);
+        saveEmp("E106", "赵六一", "男", "D001", "Java工程师", "2022-06-15", "本科", 7.2);
         saveEmp("E201", "孙八", "女", "D002", "市场总监", "2017-05-20", "硕士", 6.5);
         saveEmp("E202", "冯十一", "男", "D002", "品牌经理", "2020-09-15", "本科", 7.2);
         saveEmp("E203", "陈十二", "女", "D002", "市场专员", "2022-02-28", "本科", 6.8);
@@ -101,6 +102,7 @@ public class BizDataInitializer implements CommandLineRunner {
         saveAtt("E103", 9.0, 20.0, 1, 0);
         saveAtt("E104", 11.0, 18.5, 0, 0);
         saveAtt("E105", 7.0, 35.0, 2, 0);
+        saveAtt("E106", 8.0, 40.0, 1, 0);
         saveAtt("E201", 6.0, 45.0, 2, 0);
         saveAtt("E202", 8.0, 38.0, 1, 0);
         saveAtt("E203", 10.0, 22.0, 0, 0);
@@ -133,6 +135,7 @@ public class BizDataInitializer implements CommandLineRunner {
         saveSal("E103", "P5", 20000.00, "2025-04-01");
         saveSal("E104", "P6", 29000.00, "2025-04-01");
         saveSal("E105", "P4", 15000.00, "2025-04-01");
+        saveSal("E106", "P5", 21000.00, "2025-04-01");
         saveSal("E201", "M2", 52000.00, "2025-04-01");
         saveSal("E202", "P6", 26000.00, "2025-04-01");
         saveSal("E203", "P4", 14000.00, "2025-04-01");

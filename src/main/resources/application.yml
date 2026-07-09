@@ -55,8 +55,11 @@ hr:
       secret: hr-ai-platform-secret-key-change-in-production-2024
       expiration-ms: 86400000
     rag:
-      top-k: 5
-      similarity-threshold: 0.08
+      top-k: 3
+      similarity-threshold: 0.15
+      min-confidence-for-answer: 0.15
+      category-fallback-enabled: true
+      low-score-fallback-enabled: false
     knowledge:
       max-chunk-size: 2000
       allowed-extensions: pdf,doc,docx
@@ -65,7 +68,7 @@ hr:
       api-url: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
       api-key: sk-c969f84aae4f40b2b6e80c1a65bc9d03
       model: qwen-plus
-      temperature: 0.3
+      temperature: 0.1
       timeout-seconds: 60
     integration:
       enabled: false
@@ -73,7 +76,7 @@ hr:
       base-url: http://localhost:9090
     text-to-sql:
       enabled: true
-      max-rows: 100
+      max-rows: 50
       temperature: 0.1
       few-shot-enabled: true
       self-correction-enabled: true
@@ -84,6 +87,11 @@ hr:
       mode: llm
       fallback-to-rule: true
       temperature: 0.1
+    anti-hallucination:
+      skip-llm-for-structured-data: true
+      structured-data-max-rows: 20
+      validate-answer-numbers: true
+      skip-llm-for-guard-responses: true
 
 logging:
   level:

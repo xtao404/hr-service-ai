@@ -152,11 +152,19 @@ public class RagChatService {
                 "正在检索知识库资料并筛选最相关的制度内容...",
                 HrQueryIntent.KNOWLEDGE, "知识库 knowledge_documents", "rag"));
         List<VectorStoreService.ScoredDocument> contexts = vectorStoreService.search(question);
+        if (contexts.isEmpty() || !vectorStoreService.isConfidentEnough(contexts)) {
+            String refusal = llmService.generateAnswer(question, contexts);
+            QueryTrace trace = queryTraceBuilder.buildKnowledgeTrace();
+            return PreparedChatResult.builder()
+                    .sessionId(session.getId())
+                    .answer(refusal)
+                    .sources(List.of())
+                    .trace(trace)
+                    .build();
+        }
         emitProgress(progressListener, buildProgressTrace(
                 "KNOWLEDGE", "THINKING", "GENERATE", "答案生成",
-                contexts.isEmpty()
-                        ? "未检索到直接命中的资料，正在结合已有知识组织答复..."
-                        : "已找到相关制度资料，正在整理答案重点...",
+                "已找到相关制度资料，正在整理答案重点...",
                 HrQueryIntent.KNOWLEDGE, "知识库 knowledge_documents", "rag"));
         String answer = llmService.generateAnswer(question, contexts);
         List<SourceReference> sources = llmService.toSourceReferences(contexts);
@@ -183,7 +191,7 @@ public class RagChatService {
                 "THINKING", "GENERATE", "答案生成",
                 "已拿到结构化结果，正在组织自然语言回答并补充图表建议...",
                 dataContext.getIntent(), dataContext.getDataSource(), dataContext.getQueryMethod()));
-        String answer = llmService.generateDataAnswer(question, dataContext.getDataText(), dataContext.getDataSource());
+        String answer = llmService.generateDataAnswer(question, dataContext);
 
         SourceReference source = new SourceReference();
         source.setTitle(dataContext.getDataSource());

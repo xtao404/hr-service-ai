@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.StringJoiner;
 
 @Service
@@ -51,6 +52,12 @@ public class HrDataQueryService {
     }
 
     public HrDataContext query(String question, UserPrincipal user) {
+        Optional<NamedEmployeeQuery> multiNamed = questionAnalyzer.extractNamedEmployeeQuery(question, user)
+                .filter(NamedEmployeeQuery::isMultiEmployee);
+        if (multiNamed.isPresent()) {
+            return queryMultipleNamedEmployees(question, user);
+        }
+
         HrQueryIntent intent = questionAnalyzer.analyze(question, user);
 
         if (intent == HrQueryIntent.TEXT_TO_SQL) {
@@ -69,6 +76,7 @@ public class HrDataQueryService {
                 context.setQueryMethod("text-to-sql");
                 fillNamedEmployee(context, user, question);
                 applyManagerScopeNoteIfNeeded(context, question, user);
+                applyResultMetadata(context);
                 return context;
             }
             HrDataContext context = new HrDataContext();
@@ -100,6 +108,25 @@ public class HrDataQueryService {
             default -> context.setDataText("");
         }
         applyManagerScopeNoteIfNeeded(context, question, user);
+        applyResultMetadata(context);
+        return context;
+    }
+
+    private void applyResultMetadata(HrDataContext context) {
+        if (context.getRowCount() == null && context.getQueryRows() != null) {
+            context.setRowCount(context.getQueryRows().size());
+        }
+    }
+
+    /** 多人指定员工查询优先走预设填充，避免 Text-to-SQL 只命中前缀相同的第一个姓名。 */
+    private HrDataContext queryMultipleNamedEmployees(String question, UserPrincipal user) {
+        HrDataContext context = new HrDataContext();
+        context.setIntent(HrQueryIntent.NAMED_EMPLOYEE);
+        context.setDataSource("HR业务数据库");
+        context.setQueryMethod(presetQueryProperties.isEnabled() ? "preset" : "named-employee");
+        fillNamedEmployee(context, user, question);
+        applyManagerScopeNoteIfNeeded(context, question, user);
+        applyResultMetadata(context);
         return context;
     }
 
@@ -243,13 +270,20 @@ public class HrDataQueryService {
     private void fillNamedEmployee(HrDataContext context, UserPrincipal user, String question) {
         NamedEmployeeQuery namedQuery = questionAnalyzer.extractNamedEmployeeQuery(question, user).orElse(null);
         if (namedQuery == null) {
-            context.setDataText("无法识别要查询的员工姓名，请使用如「张三的加班时长」这类表述。");
+            context.setDataText("无法识别要查询的员工姓名，请使用如「张三的加班时长」或「赵六和赵六一的画像」这类表述。");
             return;
         }
 
-        List<BizEmployee> employees = employeeRepository.findByName(namedQuery.getEmployeeName());
+        List<String> names = namedQuery.resolvedNames();
+        if (names.size() > 1) {
+            fillMultipleNamedEmployees(context, user, names, namedQuery.getTopic());
+            return;
+        }
+
+        String name = names.get(0);
+        List<BizEmployee> employees = employeeRepository.findByName(name);
         if (employees.isEmpty()) {
-            context.setDataText("未找到员工「" + namedQuery.getEmployeeName() + "」的人事档案。");
+            context.setDataText("未找到员工「" + name + "」的人事档案。");
             return;
         }
 
@@ -261,7 +295,60 @@ public class HrDataQueryService {
             return;
         }
 
-        switch (namedQuery.getTopic()) {
+        fillSingleNamedEmployee(context, user, emp, namedQuery.getTopic());
+    }
+
+    private void fillMultipleNamedEmployees(HrDataContext context, UserPrincipal user,
+                                            List<String> names, com.hr.ai.model.enums.EmployeeQueryTopic topic) {
+        StringJoiner textJoiner = new StringJoiner("\n\n---\n\n");
+        List<Map<String, Object>> rows = new ArrayList<>();
+        List<String> notFound = new ArrayList<>();
+        List<String> denied = new ArrayList<>();
+
+        for (String name : names) {
+            List<BizEmployee> employees = employeeRepository.findByName(name);
+            if (employees.isEmpty()) {
+                notFound.add(name);
+                continue;
+            }
+            BizEmployee emp = employees.get(0);
+            try {
+                permissionService.checkEmployeeAccess(emp.getEmployeeId(), emp.getDeptId());
+            } catch (AccessDeniedException e) {
+                denied.add(name);
+                continue;
+            }
+            HrDataContext single = new HrDataContext();
+            fillSingleNamedEmployee(single, user, emp, topic);
+            textJoiner.add("【" + emp.getName() + "】\n" + single.getDataText());
+            if (single.getQueryRows() != null) {
+                rows.addAll(single.getQueryRows());
+            }
+        }
+
+        StringJoiner result = new StringJoiner("\n\n");
+        if (textJoiner.length() > 0) {
+            result.add(textJoiner.toString());
+        }
+        for (String name : notFound) {
+            result.add("未找到员工「" + name + "」的人事档案。");
+        }
+        for (String name : denied) {
+            result.add("无权查询员工「" + name + "」的数据。");
+        }
+        if (result.length() == 0) {
+            context.setDataText("未能查询到任何员工数据。");
+            return;
+        }
+
+        context.setDataText(result.toString());
+        context.setChartTitle("指定员工对比");
+        context.setQueryRows(rows);
+    }
+
+    private void fillSingleNamedEmployee(HrDataContext context, UserPrincipal user, BizEmployee emp,
+                                         com.hr.ai.model.enums.EmployeeQueryTopic topic) {
+        switch (topic) {
             case SALARY -> fillNamedEmployeeSalary(context, user, emp);
             case LEAVE -> fillNamedEmployeeLeave(context, emp);
             case OVERTIME -> fillNamedEmployeeOvertime(context, emp);

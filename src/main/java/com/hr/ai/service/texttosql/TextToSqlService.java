@@ -122,6 +122,11 @@ public class TextToSqlService {
         if (llmProperties.isMockMode()) {
             return generateMockSql(question, user);
         }
+        var namedQuery = questionAnalyzer.extractNamedEmployeeQuery(question, user);
+        if (namedQuery.isPresent() && user.getRole() != UserRole.EMPLOYEE
+                && namedQuery.get().isMultiEmployee()) {
+            return buildMultiNamedEmployeeMockSql(namedQuery.get(), user);
+        }
         return qwenChatClient.chat(systemPrompt, sqlPromptBuilder.buildUserPrompt(question),
                 textToSqlProperties.getTemperature());
     }
@@ -155,6 +160,9 @@ public class TextToSqlService {
         String q = question.toLowerCase(Locale.ROOT);
         var namedQuery = questionAnalyzer.extractNamedEmployeeQuery(question, user);
         if (namedQuery.isPresent() && user.getRole() != UserRole.EMPLOYEE) {
+            if (namedQuery.get().isMultiEmployee()) {
+                return buildMultiNamedEmployeeMockSql(namedQuery.get(), user);
+            }
             return buildNamedEmployeeMockSql(namedQuery.get(), user);
         }
 
@@ -312,6 +320,32 @@ public class TextToSqlService {
                 + "FROM biz_employee e "
                 + "JOIN biz_department d ON e.dept_id = d.dept_id "
                 + "WHERE e.employee_id = '" + employeeId + "' LIMIT 10";
+    }
+
+    private String buildMultiNamedEmployeeMockSql(NamedEmployeeQuery namedQuery, UserPrincipal user) {
+        String inClause = namedQuery.resolvedNames().stream()
+                .map(this::sanitizeEmployeeName)
+                .map(name -> "'" + name + "'")
+                .reduce((a, b) -> a + ", " + b)
+                .orElse("''");
+        String deptFilter = user.getRole() == UserRole.MANAGER
+                ? " AND e.dept_id = '" + user.getDepartmentId() + "'"
+                : "";
+        return switch (namedQuery.getTopic()) {
+            case OVERTIME -> "SELECT e.name AS 姓名, a.overtime_hours AS 累计加班 "
+                    + "FROM biz_employee e JOIN biz_attendance a ON e.employee_id = a.employee_id "
+                    + "WHERE e.name IN (" + inClause + ") AND a.quarter = '2026-Q1' AND e.status = 'ACTIVE'"
+                    + deptFilter + " ORDER BY e.name LIMIT 20";
+            case PROFILE, SATISFACTION -> "SELECT e.name AS 姓名, e.position AS 岗位, d.dept_name AS 部门, "
+                    + "e.satisfaction_score AS 满意度, e.employee_id AS 员工编号 "
+                    + "FROM biz_employee e JOIN biz_department d ON e.dept_id = d.dept_id "
+                    + "WHERE e.name IN (" + inClause + ") AND e.status = 'ACTIVE'" + deptFilter
+                    + " ORDER BY e.name LIMIT 20";
+            default -> "SELECT e.name AS 姓名, e.position AS 岗位, d.dept_name AS 部门, e.satisfaction_score AS 满意度 "
+                    + "FROM biz_employee e JOIN biz_department d ON e.dept_id = d.dept_id "
+                    + "WHERE e.name IN (" + inClause + ") AND e.status = 'ACTIVE'" + deptFilter
+                    + " ORDER BY e.name LIMIT 20";
+        };
     }
 
     private String buildNamedEmployeeMockSql(NamedEmployeeQuery namedQuery, UserPrincipal user) {

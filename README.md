@@ -292,9 +292,39 @@ Text-to-SQL 的用户查询安全由应用层独立保障（不依赖 Druid Wall
 1. 仅允许 `SELECT`，白名单 6 张 `biz_*` 表
 2. 禁止 DML/DDL/UNION/注释
 3. 自动注入角色级 `employee_id` / `dept_id` 过滤
-4. 强制 `LIMIT` 上限（默认 100 行）
+4. 强制 `LIMIT` 上限（默认 50 行）
 5. SQL 执行失败时 LLM 自纠错重试（默认 2 次）
 6. 普通员工非本人查询在路由层禁止进入 Text-to-SQL
+7. 统计类问题 Prompt 强制 `COUNT/SUM/AVG/GROUP BY`，避免拉全表明细
+
+### 防幻觉（Anti-Hallucination）
+
+| 机制 | 说明 |
+|------|------|
+| RAG 置信度门槛 | top-1 相似度 < `min-confidence-for-answer` 时直接拒答，不调 LLM |
+| 关闭低分兜底 | `low-score-fallback-enabled: false`，禁止强行返回弱相关文档 |
+| 结构化直出 | DB 查询结果 ≤ 20 行时模板直出，不经 LLM 润色 |
+| 数字校验 | LLM 润色后校验答案数字是否均来自查询结果，否则回退模板 |
+| Guard 直出 | 权限拦截类回答始终模板输出 |
+| 聚合优先 | Text-to-SQL Prompt 要求统计在数据库内完成 |
+
+```yaml
+hr:
+  ai:
+    rag:
+      top-k: 3
+      similarity-threshold: 0.15
+      min-confidence-for-answer: 0.15
+      low-score-fallback-enabled: false
+    anti-hallucination:
+      skip-llm-for-structured-data: true
+      structured-data-max-rows: 20
+      validate-answer-numbers: true
+    text-to-sql:
+      max-rows: 50
+    llm:
+      temperature: 0.1
+```
 
 ### 预测分析
 
@@ -330,7 +360,7 @@ Text-to-SQL 的用户查询安全由应用层独立保障（不依赖 Druid Wall
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `hr.ai.text-to-sql.enabled` | `true` | 是否启用 |
-| `hr.ai.text-to-sql.max-rows` | `100` | 单次最大返回行数 |
+| `hr.ai.text-to-sql.max-rows` | `50` | 单次最大返回行数 |
 | `hr.ai.text-to-sql.few-shot-enabled` | `true` | Prompt 中包含示例 SQL |
 | `hr.ai.text-to-sql.self-correction-enabled` | `true` | 执行失败时 LLM 自纠错 |
 | `hr.ai.text-to-sql.max-retries` | `2` | 自纠错最大重试次数 |
