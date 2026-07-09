@@ -36,7 +36,7 @@ hr_ai/
 │   │   ├── config/             # 配置与数据初始化
 │   │   └── model/              # 平台表 + biz_* 业务表实体
 │   ├── docs/
-│   │   └── 业务测试用例.md      # 全场景测试用例（146 条）
+│   │   └── 业务测试用例.md      # 全场景测试用例（170 条）
 │   └── scripts/mysql/
 │       └── hr_test_data.sql    # MySQL 业务测试数据脚本
 └── hr-admin-ai/                # Vue 3 前端
@@ -333,16 +333,16 @@ hr:
 
 ## 测试
 
-完整业务测试用例见 [`docs/业务测试用例.md`](docs/业务测试用例.md)（146 条，覆盖认证、RAG、预设查询、Text-to-SQL、指定员工、权限、溯源等）。
+完整业务测试用例见 [`docs/业务测试用例.md`](docs/业务测试用例.md)（170 条，覆盖默认 Text-to-SQL 路由、指定员工、preset 双模式、权限、溯源等）。
 
-单元测试（意图路由）：
+单元测试（意图路由 + SQL 安全）：
 
 ```bash
 cd hr-service-ai
-mvn test -Dtest=HrQuestionAnalyzerTest
+mvn test -Dtest=HrQuestionAnalyzerTest,SqlSecurityValidatorTest
 ```
 
-推荐冒烟顺序：`AUTH-01` → `RAG-01` → `PER-01` → `DEPT-01`（需 preset 启用）→ `SQL-01`
+推荐冒烟顺序（默认配置）：`AUTH-01` → `RAG-01` → `PER-01` → `DEPT-01` → `SQL-01`
 
 ## 常见问题
 

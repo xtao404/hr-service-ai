@@ -17,10 +17,14 @@ public class ActionSuggestionService {
         List<ActionSuggestion> suggestions = new ArrayList<>();
         String q = question != null ? question.toLowerCase(Locale.ROOT) : "";
 
-        if (intent == HrQueryIntent.DEPT_TURNOVER || q.contains("离职") || q.contains("风险")) {
+        if (intent == HrQueryIntent.DEPT_TURNOVER
+                || intent == HrQueryIntent.TEXT_TO_SQL && (q.contains("离职") || q.contains("风险"))
+                || q.contains("离职") || q.contains("风险")) {
             suggestions.addAll(buildRetentionSuggestions(context));
         }
-        if (intent == HrQueryIntent.DEPT_OVERTIME || (q.contains("加班") && q.contains("超过"))) {
+        if (intent == HrQueryIntent.DEPT_OVERTIME
+                || intent == HrQueryIntent.TEXT_TO_SQL && q.contains("加班") && q.contains("超过")
+                || (q.contains("加班") && q.contains("超过"))) {
             suggestions.add(action("WORKLOAD", null, null,
                     "Review 部门工时负荷",
                     "建议 Review 团队排班与项目分配，必要时增加人手或调整交付节奏。"));

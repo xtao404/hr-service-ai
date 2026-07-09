@@ -19,6 +19,14 @@ public class SqlPermissionRewriter {
             "\\b(GROUP\\s+BY|ORDER\\s+BY|HAVING|LIMIT)\\b",
             Pattern.CASE_INSENSITIVE);
 
+    private static final Pattern JOIN_EMPLOYEE_ALIAS = Pattern.compile(
+            "JOIN\\s+BIZ_EMPLOYEE\\s+(?:AS\\s+)?(\\w+)",
+            Pattern.CASE_INSENSITIVE);
+
+    private static final Pattern FROM_EMPLOYEE_ALIAS = Pattern.compile(
+            "FROM\\s+BIZ_EMPLOYEE\\s+(?:AS\\s+)?(\\w+)",
+            Pattern.CASE_INSENSITIVE);
+
     /**
      * 若 SQL 未包含必要的权限过滤条件，则在 GROUP BY / ORDER BY / LIMIT 之前注入 AND 条件。
      */
@@ -58,17 +66,17 @@ public class SqlPermissionRewriter {
     }
 
     private String detectEmployeeAlias(String upperSql) {
-        // JOIN biz_employee e / JOIN biz_employee AS e
-        Matcher aliasMatcher = Pattern.compile(
-                "JOIN\\s+BIZ_EMPLOYEE\\s+(?:AS\\s+)?(\\w+)",
-                Pattern.CASE_INSENSITIVE).matcher(upperSql);
-        if (aliasMatcher.find()) {
-            return aliasMatcher.group(1).toLowerCase(Locale.ROOT);
+        Matcher joinMatcher = JOIN_EMPLOYEE_ALIAS.matcher(upperSql);
+        if (joinMatcher.find()) {
+            return joinMatcher.group(1).toLowerCase(Locale.ROOT);
+        }
+        Matcher fromMatcher = FROM_EMPLOYEE_ALIAS.matcher(upperSql);
+        if (fromMatcher.find()) {
+            return fromMatcher.group(1).toLowerCase(Locale.ROOT);
         }
         if (upperSql.contains("BIZ_EMPLOYEE")) {
             return "biz_employee";
         }
-        // 考勤/绩效等表通常通过 employee_id 关联
         return "biz_employee";
     }
 

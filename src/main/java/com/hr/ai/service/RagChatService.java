@@ -10,6 +10,7 @@ import com.hr.ai.security.PermissionService;
 import com.hr.ai.security.UserPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -182,7 +183,7 @@ public class RagChatService {
         ChatSession session = sessionRepository.findById(sessionId)
                 .orElseThrow(() -> new RuntimeException("会话不存在"));
         if (!session.getUserId().equals(user.getId())) {
-            throw new RuntimeException("无权访问该会话");
+            throw new AccessDeniedException("无权访问该会话");
         }
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
         return messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()

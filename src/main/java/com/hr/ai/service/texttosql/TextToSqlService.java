@@ -3,10 +3,12 @@ package com.hr.ai.service.texttosql;
 import com.hr.ai.config.LlmProperties;
 import com.hr.ai.config.TextToSqlProperties;
 import com.hr.ai.dto.HrDataContext;
+import com.hr.ai.dto.NamedEmployeeQuery;
 import com.hr.ai.model.enums.HrQueryIntent;
 import com.hr.ai.model.enums.UserRole;
 import com.hr.ai.security.PermissionService;
 import com.hr.ai.security.UserPrincipal;
+import com.hr.ai.service.HrQuestionAnalyzer;
 import com.hr.ai.service.QwenChatClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +31,7 @@ public class TextToSqlService {
     private final SqlPermissionRewriter sqlPermissionRewriter;
     private final SqlExecutionService sqlExecutionService;
     private final PermissionService permissionService;
+    private final HrQuestionAnalyzer questionAnalyzer;
 
     public HrDataContext query(String question, UserPrincipal user) {
         if (!textToSqlProperties.isEnabled()) {
@@ -124,21 +127,17 @@ public class TextToSqlService {
 
     private String generateMockSql(String question, UserPrincipal user) {
         String q = question.toLowerCase(Locale.ROOT);
+        var namedQuery = questionAnalyzer.extractNamedEmployeeQuery(question);
+        if (namedQuery.isPresent() && user.getRole() != UserRole.EMPLOYEE) {
+            return buildNamedEmployeeMockSql(namedQuery.get(), user);
+        }
+
+        if (isPersonalQuestion(q)) {
+            return buildPersonalMockSql(q, user);
+        }
 
         if (user.getRole() == UserRole.EMPLOYEE) {
-            if (q.contains("加班")) {
-                return "SELECT e.name AS 姓名, a.overtime_hours AS 加班时长, a.quarter AS 季度 "
-                        + "FROM biz_employee e "
-                        + "JOIN biz_attendance a ON e.employee_id = a.employee_id "
-                        + "WHERE e.employee_id = '" + user.getEmployeeId() + "' AND a.quarter = '2026-Q1' LIMIT 10";
-            }
-            if (q.contains("绩效")) {
-                return "SELECT e.name AS 姓名, p.rating AS 绩效评级, p.score AS 绩效分数 "
-                        + "FROM biz_employee e "
-                        + "JOIN biz_performance p ON e.employee_id = p.employee_id "
-                        + "WHERE e.employee_id = '" + user.getEmployeeId() + "' LIMIT 10";
-            }
-            return "SELECT e.name AS 姓名, e.position AS 岗位, d.dept_name AS 部门 "
+            return "SELECT e.name AS 姓名, e.position AS 岗位, d.dept_name AS 部门, e.satisfaction_score AS 满意度 "
                     + "FROM biz_employee e "
                     + "JOIN biz_department d ON e.dept_id = d.dept_id "
                     + "WHERE e.employee_id = '" + user.getEmployeeId() + "' LIMIT 10";
@@ -148,7 +147,17 @@ public class TextToSqlService {
                 ? " AND e.dept_id = '" + user.getDepartmentId() + "'"
                 : "";
 
-        if (q.contains("对比") || q.contains("各部门") || q.contains("哪个部门") || q.contains("排名")) {
+        if ((q.contains("部门") || q.contains("本季度")) && q.contains("加班")
+                && !q.contains("各部门") && !q.contains("对比")) {
+            return "SELECT e.name AS 姓名, a.overtime_hours AS 加班时长, a.late_count AS 迟到次数 "
+                    + "FROM biz_employee e "
+                    + "JOIN biz_attendance a ON e.employee_id = a.employee_id "
+                    + "WHERE a.quarter = '2026-Q1' AND e.status = 'ACTIVE'" + deptFilter
+                    + " ORDER BY a.overtime_hours DESC LIMIT 20";
+        }
+
+        if (q.contains("对比") || q.contains("各部门") || q.contains("哪个部门")
+                || (q.contains("排名") && !q.contains("我的"))) {
             return "SELECT d.dept_name AS 部门名称, SUM(a.overtime_hours) AS 总加班时长 "
                     + "FROM biz_department d JOIN biz_employee e ON d.dept_id = e.dept_id "
                     + "JOIN biz_attendance a ON e.employee_id = a.employee_id "
@@ -169,6 +178,12 @@ public class TextToSqlService {
                     + "WHERE p.rating = 'C' AND a.overtime_hours > 50 AND a.quarter = '2026-Q1'"
                     + deptFilter + " LIMIT 20";
         }
+        if (q.contains("绩效")) {
+            return "SELECT e.name AS 姓名, p.rating AS 绩效评级, p.score AS 绩效分数, e.satisfaction_score AS 满意度 "
+                    + "FROM biz_employee e "
+                    + "JOIN biz_performance p ON e.employee_id = p.employee_id "
+                    + "WHERE e.status = 'ACTIVE'" + deptFilter + " ORDER BY p.score DESC LIMIT 20";
+        }
         if (q.contains("离职") || q.contains("风险")) {
             return "SELECT e.name AS 姓名, d.dept_name AS 部门, r.risk_score AS 风险分, "
                     + "r.risk_level AS 风险等级, r.factors AS 风险因素 "
@@ -177,12 +192,23 @@ public class TextToSqlService {
                     + "WHERE r.risk_level IN ('HIGH','CRITICAL')" + deptFilter
                     + " ORDER BY r.risk_score DESC LIMIT 20";
         }
-        if (q.contains("人数") || q.contains("headcount") || q.contains("编制")) {
+        if (q.contains("人数") || q.contains("headcount") || q.contains("编制") || q.contains("在职")) {
             return "SELECT d.dept_name AS 部门名称, COUNT(e.id) AS 在职人数 "
                     + "FROM biz_department d "
                     + "LEFT JOIN biz_employee e ON d.dept_id = e.dept_id AND e.status = 'ACTIVE'"
                     + (user.getRole() == UserRole.MANAGER
                     ? " WHERE d.dept_id = '" + user.getDepartmentId() + "'" : "")
+                    + " GROUP BY d.dept_name LIMIT 10";
+        }
+        if (q.contains("概览") || q.contains("整体") || (q.contains("公司") && q.contains("统计"))) {
+            return "SELECT d.dept_name AS 部门名称, COUNT(e.id) AS 在职人数, "
+                    + "COALESCE(SUM(a.overtime_hours), 0) AS 总加班时长 "
+                    + "FROM biz_department d "
+                    + "LEFT JOIN biz_employee e ON d.dept_id = e.dept_id AND e.status = 'ACTIVE' "
+                    + "LEFT JOIN biz_attendance a ON e.employee_id = a.employee_id AND a.quarter = '2026-Q1' "
+                    + "WHERE d.dept_id != 'D000'"
+                    + (user.getRole() == UserRole.MANAGER
+                    ? " AND d.dept_id = '" + user.getDepartmentId() + "'" : "")
                     + " GROUP BY d.dept_name LIMIT 10";
         }
         if (q.contains("薪酬") || q.contains("工资") || q.contains("薪资")) {
@@ -200,6 +226,101 @@ public class TextToSqlService {
                 + (user.getRole() == UserRole.MANAGER
                 ? " WHERE d.dept_id = '" + user.getDepartmentId() + "'" : "")
                 + " GROUP BY d.dept_name LIMIT 10";
+    }
+
+    private boolean isPersonalQuestion(String q) {
+        return q.contains("我的") || q.contains("我") && !q.contains("我们") && !q.contains("部门")
+                && !q.contains("公司") && !q.contains("团队");
+    }
+
+    private String buildPersonalMockSql(String q, UserPrincipal user) {
+        String employeeId = user.getEmployeeId();
+        if (q.contains("假期") || q.contains("年假") || q.contains("余额")) {
+            return "SELECT e.name AS 姓名, a.leave_balance AS 年假余额, a.quarter AS 季度 "
+                    + "FROM biz_employee e "
+                    + "JOIN biz_attendance a ON e.employee_id = a.employee_id "
+                    + "WHERE e.employee_id = '" + employeeId + "' AND a.quarter = '2026-Q1' LIMIT 10";
+        }
+        if (q.contains("加班")) {
+            return "SELECT e.name AS 姓名, a.overtime_hours AS 加班时长, a.quarter AS 季度 "
+                    + "FROM biz_employee e "
+                    + "JOIN biz_attendance a ON e.employee_id = a.employee_id "
+                    + "WHERE e.employee_id = '" + employeeId + "' AND a.quarter = '2026-Q1' LIMIT 10";
+        }
+        if (q.contains("考勤") || q.contains("迟到") || q.contains("缺勤")) {
+            return "SELECT e.name AS 姓名, a.late_count AS 迟到次数, a.absent_days AS 缺勤天数, "
+                    + "a.overtime_hours AS 加班时长 "
+                    + "FROM biz_employee e "
+                    + "JOIN biz_attendance a ON e.employee_id = a.employee_id "
+                    + "WHERE e.employee_id = '" + employeeId + "' AND a.quarter = '2026-Q1' LIMIT 10";
+        }
+        if (q.contains("绩效")) {
+            return "SELECT e.name AS 姓名, p.rating AS 绩效评级, p.score AS 绩效分数 "
+                    + "FROM biz_employee e "
+                    + "JOIN biz_performance p ON e.employee_id = p.employee_id "
+                    + "WHERE e.employee_id = '" + employeeId + "' LIMIT 10";
+        }
+        if (q.contains("薪资") || q.contains("工资") || q.contains("薪酬")) {
+            if (user.getRole() == UserRole.EMPLOYEE) {
+                throw new IllegalArgumentException("安全拦截：员工无权查询薪酬数据");
+            }
+            return "SELECT e.name AS 姓名, s.base_salary AS 基本月薪, s.salary_band AS 薪酬等级 "
+                    + "FROM biz_employee e JOIN biz_salary s ON e.employee_id = s.employee_id "
+                    + "WHERE e.employee_id = '" + employeeId + "' LIMIT 10";
+        }
+        return "SELECT e.name AS 姓名, e.position AS 岗位, d.dept_name AS 部门, e.satisfaction_score AS 满意度 "
+                + "FROM biz_employee e "
+                + "JOIN biz_department d ON e.dept_id = d.dept_id "
+                + "WHERE e.employee_id = '" + employeeId + "' LIMIT 10";
+    }
+
+    private String buildNamedEmployeeMockSql(NamedEmployeeQuery namedQuery, UserPrincipal user) {
+        String name = sanitizeEmployeeName(namedQuery.getEmployeeName());
+        String deptFilter = user.getRole() == UserRole.MANAGER
+                ? " AND e.dept_id = '" + user.getDepartmentId() + "'"
+                : "";
+        return switch (namedQuery.getTopic()) {
+            case SALARY -> {
+                if (user.getRole() == UserRole.MANAGER) {
+                    throw new IllegalArgumentException("安全拦截：部门经理无权查询薪酬明细");
+                }
+                yield "SELECT e.name AS 姓名, s.base_salary AS 基本月薪, s.salary_band AS 薪酬等级 "
+                        + "FROM biz_employee e JOIN biz_salary s ON e.employee_id = s.employee_id "
+                        + "WHERE e.name = '" + name + "' AND e.status = 'ACTIVE'" + deptFilter + " LIMIT 10";
+            }
+            case LEAVE -> "SELECT e.name AS 姓名, a.leave_balance AS 年假余额 "
+                    + "FROM biz_employee e JOIN biz_attendance a ON e.employee_id = a.employee_id "
+                    + "WHERE e.name = '" + name + "' AND a.quarter = '2026-Q1' AND e.status = 'ACTIVE'"
+                    + deptFilter + " LIMIT 10";
+            case OVERTIME -> "SELECT e.name AS 姓名, a.overtime_hours AS 累计加班 "
+                    + "FROM biz_employee e JOIN biz_attendance a ON e.employee_id = a.employee_id "
+                    + "WHERE e.name = '" + name + "' AND a.quarter = '2026-Q1' AND e.status = 'ACTIVE'"
+                    + deptFilter + " LIMIT 10";
+            case ATTENDANCE -> "SELECT e.name AS 姓名, a.late_count AS 迟到次数, a.absent_days AS 缺勤天数, "
+                    + "a.overtime_hours AS 加班时长 "
+                    + "FROM biz_employee e JOIN biz_attendance a ON e.employee_id = a.employee_id "
+                    + "WHERE e.name = '" + name + "' AND a.quarter = '2026-Q1' AND e.status = 'ACTIVE'"
+                    + deptFilter + " LIMIT 10";
+            case PERFORMANCE -> "SELECT e.name AS 姓名, p.rating AS 绩效评级, p.score AS 绩效分数 "
+                    + "FROM biz_employee e JOIN biz_performance p ON e.employee_id = p.employee_id "
+                    + "WHERE e.name = '" + name + "' AND e.status = 'ACTIVE'" + deptFilter + " LIMIT 10";
+            case TURNOVER -> "SELECT e.name AS 姓名, r.risk_score AS 离职风险分, r.risk_level AS 风险等级 "
+                    + "FROM biz_employee e JOIN biz_turnover_risk r ON e.employee_id = r.employee_id "
+                    + "WHERE e.name = '" + name + "' AND e.status = 'ACTIVE'" + deptFilter + " LIMIT 10";
+            case SATISFACTION -> "SELECT e.name AS 姓名, e.satisfaction_score AS 满意度 "
+                    + "FROM biz_employee e "
+                    + "WHERE e.name = '" + name + "' AND e.status = 'ACTIVE'" + deptFilter + " LIMIT 10";
+            case PROFILE -> "SELECT e.name AS 姓名, e.position AS 岗位, d.dept_name AS 部门, e.satisfaction_score AS 满意度 "
+                    + "FROM biz_employee e JOIN biz_department d ON e.dept_id = d.dept_id "
+                    + "WHERE e.name = '" + name + "' AND e.status = 'ACTIVE'" + deptFilter + " LIMIT 10";
+        };
+    }
+
+    private String sanitizeEmployeeName(String name) {
+        if (name == null || !name.matches("[\\u4e00-\\u9fa5]{2,4}")) {
+            throw new IllegalArgumentException("无效的员工姓名");
+        }
+        return name;
     }
 
     private String inferChartTitle(String question) {

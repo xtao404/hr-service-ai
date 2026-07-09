@@ -1,5 +1,6 @@
 package com.hr.ai.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 
 import java.util.List;
@@ -12,6 +13,8 @@ public class QueryTrace {
     private String intentLabel;
     private String dataSource;
     private String queryMethod;
+    /** 仅服务端日志使用，不向前端/API 暴露（SQL-21/22） */
+    @JsonIgnore
     private String generatedSql;
     private String permissionNote;
     private Integer rowCount;
